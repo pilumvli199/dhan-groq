@@ -42,19 +42,83 @@ DHAN_OPTION_CHAIN_URL = f"{DHAN_API_BASE}/v2/optionchain"
 DHAN_EXPIRY_LIST_URL = f"{DHAN_API_BASE}/v2/optionchain/expirylist"
 DHAN_INSTRUMENTS_URL = "https://images.dhan.co/api-data/api-scrip-master.csv"
 
-# Stock/Index List
+# ========================
+# 🎯 60 STOCKS + 2 INDICES
+# ========================
 STOCKS_INDICES = {
-    # Top Indices
+    # ==================
+    # INDICES (2)
+    # ==================
     "NIFTY 50": {"symbol": "NIFTY 50", "segment": "IDX_I"},
     "NIFTY BANK": {"symbol": "NIFTY BANK", "segment": "IDX_I"},
     
-    # High Volume Stocks
+    # ==================
+    # NIFTY 50 STOCKS (50)
+    # ==================
     "RELIANCE": {"symbol": "RELIANCE", "segment": "NSE_EQ"},
-    "HDFCBANK": {"symbol": "HDFCBANK", "segment": "NSE_EQ"},
-    "ICICIBANK": {"symbol": "ICICIBANK", "segment": "NSE_EQ"},
-    "INFY": {"symbol": "INFY", "segment": "NSE_EQ"},
     "TCS": {"symbol": "TCS", "segment": "NSE_EQ"},
+    "HDFCBANK": {"symbol": "HDFCBANK", "segment": "NSE_EQ"},
+    "INFY": {"symbol": "INFY", "segment": "NSE_EQ"},
+    "ICICIBANK": {"symbol": "ICICIBANK", "segment": "NSE_EQ"},
+    "HINDUNILVR": {"symbol": "HINDUNILVR", "segment": "NSE_EQ"},
+    "ITC": {"symbol": "ITC", "segment": "NSE_EQ"},
     "SBIN": {"symbol": "SBIN", "segment": "NSE_EQ"},
+    "BHARTIARTL": {"symbol": "BHARTIARTL", "segment": "NSE_EQ"},
+    "BAJFINANCE": {"symbol": "BAJFINANCE", "segment": "NSE_EQ"},
+    "KOTAKBANK": {"symbol": "KOTAKBANK", "segment": "NSE_EQ"},
+    "LT": {"symbol": "LT", "segment": "NSE_EQ"},
+    "AXISBANK": {"symbol": "AXISBANK", "segment": "NSE_EQ"},
+    "ASIANPAINT": {"symbol": "ASIANPAINT", "segment": "NSE_EQ"},
+    "MARUTI": {"symbol": "MARUTI", "segment": "NSE_EQ"},
+    "HCLTECH": {"symbol": "HCLTECH", "segment": "NSE_EQ"},
+    "SUNPHARMA": {"symbol": "SUNPHARMA", "segment": "NSE_EQ"},
+    "TITAN": {"symbol": "TITAN", "segment": "NSE_EQ"},
+    "ULTRACEMCO": {"symbol": "ULTRACEMCO", "segment": "NSE_EQ"},
+    "NESTLEIND": {"symbol": "NESTLEIND", "segment": "NSE_EQ"},
+    "BAJAJFINSV": {"symbol": "BAJAJFINSV", "segment": "NSE_EQ"},
+    "WIPRO": {"symbol": "WIPRO", "segment": "NSE_EQ"},
+    "ADANIENT": {"symbol": "ADANIENT", "segment": "NSE_EQ"},
+    "ONGC": {"symbol": "ONGC", "segment": "NSE_EQ"},
+    "NTPC": {"symbol": "NTPC", "segment": "NSE_EQ"},
+    "POWERGRID": {"symbol": "POWERGRID", "segment": "NSE_EQ"},
+    "TATAMOTORS": {"symbol": "TATAMOTORS", "segment": "NSE_EQ"},
+    "M&M": {"symbol": "M&M", "segment": "NSE_EQ"},
+    "TECHM": {"symbol": "TECHM", "segment": "NSE_EQ"},
+    "TATASTEEL": {"symbol": "TATASTEEL", "segment": "NSE_EQ"},
+    "INDUSINDBK": {"symbol": "INDUSINDBK", "segment": "NSE_EQ"},
+    "JSWSTEEL": {"symbol": "JSWSTEEL", "segment": "NSE_EQ"},
+    "DRREDDY": {"symbol": "DRREDDY", "segment": "NSE_EQ"},
+    "CIPLA": {"symbol": "CIPLA", "segment": "NSE_EQ"},
+    "EICHERMOT": {"symbol": "EICHERMOT", "segment": "NSE_EQ"},
+    "APOLLOHOSP": {"symbol": "APOLLOHOSP", "segment": "NSE_EQ"},
+    "HINDALCO": {"symbol": "HINDALCO", "segment": "NSE_EQ"},
+    "COALINDIA": {"symbol": "COALINDIA", "segment": "NSE_EQ"},
+    "ADANIPORTS": {"symbol": "ADANIPORTS", "segment": "NSE_EQ"},
+    "BRITANNIA": {"symbol": "BRITANNIA", "segment": "NSE_EQ"},
+    "DIVISLAB": {"symbol": "DIVISLAB", "segment": "NSE_EQ"},
+    "BPCL": {"symbol": "BPCL", "segment": "NSE_EQ"},
+    "GRASIM": {"symbol": "GRASIM", "segment": "NSE_EQ"},
+    "HEROMOTOCO": {"symbol": "HEROMOTOCO", "segment": "NSE_EQ"},
+    "SHRIRAMFIN": {"symbol": "SHRIRAMFIN", "segment": "NSE_EQ"},
+    "TRENT": {"symbol": "TRENT", "segment": "NSE_EQ"},
+    "BAJAJ-AUTO": {"symbol": "BAJAJ-AUTO", "segment": "NSE_EQ"},
+    "LTIM": {"symbol": "LTIM", "segment": "NSE_EQ"},
+    "SBILIFE": {"symbol": "SBILIFE", "segment": "NSE_EQ"},
+    "HDFCLIFE": {"symbol": "HDFCLIFE", "segment": "NSE_EQ"},
+    
+    # ==================
+    # ADDITIONAL TOP 10 STOCKS (10)
+    # ==================
+    "ZOMATO": {"symbol": "ZOMATO", "segment": "NSE_EQ"},
+    "PIDILITIND": {"symbol": "PIDILITIND", "segment": "NSE_EQ"},
+    "DMART": {"symbol": "DMART", "segment": "NSE_EQ"},
+    "ADANIGREEN": {"symbol": "ADANIGREEN", "segment": "NSE_EQ"},
+    "IRCTC": {"symbol": "IRCTC", "segment": "NSE_EQ"},
+    "PAYTM": {"symbol": "PAYTM", "segment": "NSE_EQ"},
+    "NYKAA": {"symbol": "NYKAA", "segment": "NSE_EQ"},
+    "POLICYBZR": {"symbol": "POLICYBZR", "segment": "NSE_EQ"},
+    "GODREJCP": {"symbol": "GODREJCP", "segment": "NSE_EQ"},
+    "SIEMENS": {"symbol": "SIEMENS", "segment": "NSE_EQ"},
 }
 
 # ========================
@@ -263,7 +327,7 @@ STOCK: {symbol}
 CURRENT SPOT PRICE: ₹{spot_price:,.2f}
 TIMESTAMP: {datetime.now().strftime('%d-%m-%Y %H:%M IST')}
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 📊 TECHNICAL INDICATORS:
 {tech_summary}
@@ -1244,9 +1308,9 @@ class TradingBot:
             msg += "  • GPT o1-mini - Deep Analysis\n"
             msg += "  • DhanHQ API v2 - Data\n\n"
             
-            msg += "📋 *SYMBOLS:*\n"
-            symbols_list = ", ".join(list(self.security_id_map.keys()))
-            msg += f"  {symbols_list}\n\n"
+            msg += "📋 *MONITORING:*\n"
+            msg += f"  • 2 Indices: NIFTY 50, NIFTY BANK\n"
+            msg += f"  • 60 Top Stocks (NIFTY 50 + Top 10)\n\n"
             
             msg += "💰 *COST ESTIMATE:*\n"
             msg += "  • Groq: FREE (unlimited)\n"
@@ -1296,6 +1360,7 @@ if __name__ == "__main__":
         logger.info("🚀 Initializing Trading Bot...")
         logger.info("🔍 Filter: Groq (FREE)")
         logger.info("🧠 Analysis: GPT o1-mini (₹1.43 per call)")
+        logger.info(f"📊 Monitoring: {len(STOCKS_INDICES)} symbols (2 indices + 60 stocks)")
         
         bot = TradingBot()
         asyncio.run(bot.run())
