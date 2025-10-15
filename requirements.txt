@@ -9,17 +9,8 @@ matplotlib==3.8.2
 mplfinance==0.12.10b0
 Pillow==10.1.0
 
-# Advanced Technical Analysis Libraries
-pandas-ta==0.3.14b0
+# Technical Analysis - Stable versions that work on Python 3.11
+ta==0.11.0
 finta==1.3
 
-# Optional: TA-Lib (Most powerful but requires C compilation)
-# Uncomment below if you can compile C libraries on your system
-# TA-Lib==0.4.28
-
-# Note: For TA-Lib installation:
-# 1. Download TA-Lib C library from https://ta-lib.org/
-# 2. Install C library first
-# 3. Then: pip install TA-Lib
-
-# Alternative: Use pandas-ta + finta (pure Python, no compilation needed)
+# Note: Using 'ta' library instead of 'pandas-ta' for better compatibility
