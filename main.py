@@ -15,7 +15,11 @@ import numpy as np
 from PIL import Image
 import json
 
-# Logging setup
+# Advanced Technical Analysis Libraries
+import pandas_ta as ta
+from finta import TA
+
+# Logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -30,16 +34,13 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 DHAN_CLIENT_ID = os.getenv("DHAN_CLIENT_ID")
 DHAN_ACCESS_TOKEN = os.getenv("DHAN_ACCESS_TOKEN")
 
-# Dhan API URLs
 DHAN_API_BASE = "https://api.dhan.co"
 DHAN_INTRADAY_URL = f"{DHAN_API_BASE}/v2/charts/intraday"
 DHAN_OPTION_CHAIN_URL = f"{DHAN_API_BASE}/v2/optionchain"
 DHAN_EXPIRY_LIST_URL = f"{DHAN_API_BASE}/v2/optionchain/expirylist"
 DHAN_INSTRUMENTS_URL = "https://images.dhan.co/api-data/api-scrip-master.csv"
 
-# ========================
-# STOCKS + INDICES (62 symbols)
-# ========================
+# Stocks + Indices
 STOCKS_INDICES = {
     "NIFTY 50": {"symbol": "NIFTY 50", "segment": "IDX_I"},
     "NIFTY BANK": {"symbol": "NIFTY BANK", "segment": "IDX_I"},
@@ -53,607 +54,445 @@ STOCKS_INDICES = {
     "SBIN": {"symbol": "SBIN", "segment": "NSE_EQ"},
     "BHARTIARTL": {"symbol": "BHARTIARTL", "segment": "NSE_EQ"},
     "BAJFINANCE": {"symbol": "BAJFINANCE", "segment": "NSE_EQ"},
-    "KOTAKBANK": {"symbol": "KOTAKBANK", "segment": "NSE_EQ"},
-    "LT": {"symbol": "LT", "segment": "NSE_EQ"},
-    "AXISBANK": {"symbol": "AXISBANK", "segment": "NSE_EQ"},
-    "ASIANPAINT": {"symbol": "ASIANPAINT", "segment": "NSE_EQ"},
-    "MARUTI": {"symbol": "MARUTI", "segment": "NSE_EQ"},
-    "HCLTECH": {"symbol": "HCLTECH", "segment": "NSE_EQ"},
-    "SUNPHARMA": {"symbol": "SUNPHARMA", "segment": "NSE_EQ"},
-    "TITAN": {"symbol": "TITAN", "segment": "NSE_EQ"},
-    "ULTRACEMCO": {"symbol": "ULTRACEMCO", "segment": "NSE_EQ"},
-    "NESTLEIND": {"symbol": "NESTLEIND", "segment": "NSE_EQ"},
-    "BAJAJFINSV": {"symbol": "BAJAJFINSV", "segment": "NSE_EQ"},
-    "WIPRO": {"symbol": "WIPRO", "segment": "NSE_EQ"},
-    "ADANIENT": {"symbol": "ADANIENT", "segment": "NSE_EQ"},
-    "ONGC": {"symbol": "ONGC", "segment": "NSE_EQ"},
-    "NTPC": {"symbol": "NTPC", "segment": "NSE_EQ"},
-    "POWERGRID": {"symbol": "POWERGRID", "segment": "NSE_EQ"},
-    "TATAMOTORS": {"symbol": "TATAMOTORS", "segment": "NSE_EQ"},
-    "M&M": {"symbol": "M&M", "segment": "NSE_EQ"},
-    "TECHM": {"symbol": "TECHM", "segment": "NSE_EQ"},
-    "TATASTEEL": {"symbol": "TATASTEEL", "segment": "NSE_EQ"},
-    "INDUSINDBK": {"symbol": "INDUSINDBK", "segment": "NSE_EQ"},
-    "JSWSTEEL": {"symbol": "JSWSTEEL", "segment": "NSE_EQ"},
-    "DRREDDY": {"symbol": "DRREDDY", "segment": "NSE_EQ"},
-    "CIPLA": {"symbol": "CIPLA", "segment": "NSE_EQ"},
-    "EICHERMOT": {"symbol": "EICHERMOT", "segment": "NSE_EQ"},
-    "APOLLOHOSP": {"symbol": "APOLLOHOSP", "segment": "NSE_EQ"},
-    "HINDALCO": {"symbol": "HINDALCO", "segment": "NSE_EQ"},
-    "COALINDIA": {"symbol": "COALINDIA", "segment": "NSE_EQ"},
-    "ADANIPORTS": {"symbol": "ADANIPORTS", "segment": "NSE_EQ"},
-    "BRITANNIA": {"symbol": "BRITANNIA", "segment": "NSE_EQ"},
-    "DIVISLAB": {"symbol": "DIVISLAB", "segment": "NSE_EQ"},
-    "BPCL": {"symbol": "BPCL", "segment": "NSE_EQ"},
-    "GRASIM": {"symbol": "GRASIM", "segment": "NSE_EQ"},
-    "HEROMOTOCO": {"symbol": "HEROMOTOCO", "segment": "NSE_EQ"},
-    "SHRIRAMFIN": {"symbol": "SHRIRAMFIN", "segment": "NSE_EQ"},
-    "TRENT": {"symbol": "TRENT", "segment": "NSE_EQ"},
-    "BAJAJ-AUTO": {"symbol": "BAJAJ-AUTO", "segment": "NSE_EQ"},
-    "LTIM": {"symbol": "LTIM", "segment": "NSE_EQ"},
-    "SBILIFE": {"symbol": "SBILIFE", "segment": "NSE_EQ"},
-    "HDFCLIFE": {"symbol": "HDFCLIFE", "segment": "NSE_EQ"},
-    "ZOMATO": {"symbol": "ZOMATO", "segment": "NSE_EQ"},
-    "PIDILITIND": {"symbol": "PIDILITIND", "segment": "NSE_EQ"},
-    "DMART": {"symbol": "DMART", "segment": "NSE_EQ"},
-    "ADANIGREEN": {"symbol": "ADANIGREEN", "segment": "NSE_EQ"},
-    "IRCTC": {"symbol": "IRCTC", "segment": "NSE_EQ"},
-    "PAYTM": {"symbol": "PAYTM", "segment": "NSE_EQ"},
-    "NYKAA": {"symbol": "NYKAA", "segment": "NSE_EQ"},
-    "POLICYBZR": {"symbol": "POLICYBZR", "segment": "NSE_EQ"},
-    "GODREJCP": {"symbol": "GODREJCP", "segment": "NSE_EQ"},
-    "SIEMENS": {"symbol": "SIEMENS", "segment": "NSE_EQ"},
 }
 
 
 # ========================
-# MOMENTUM SCANNER
+# ADVANCED TECHNICAL ANALYZER
 # ========================
-class MomentumScanner:
+class AdvancedTechnicalAnalyzer:
     """
-    Pure Python momentum & breakout detection
-    No complex indicators - just price action!
+    Using pandas-ta & finta for 130+ indicators
     """
     
     @staticmethod
-    def scan_momentum(candles, spot_price):
-        """
-        Main scanner - detect momentum, breakouts, breakdowns
-        Returns: signal dict with setup details
-        """
-        if not candles or len(candles) < 50:
-            return None
-        
+    def prepare_dataframe(candles):
+        """Convert candles to DataFrame"""
         try:
+            df = pd.DataFrame(candles)
+            df['timestamp'] = pd.to_datetime(df['timestamp'])
+            df.set_index('timestamp', inplace=True)
+            
+            # Rename columns for TA libraries
+            df.rename(columns={
+                'open': 'Open',
+                'high': 'High',
+                'low': 'Low',
+                'close': 'Close',
+                'volume': 'Volume'
+            }, inplace=True)
+            
+            return df
+        except Exception as e:
+            logger.error(f"DataFrame prep error: {e}")
+            return None
+    
+    @staticmethod
+    def calculate_all_indicators(df):
+        """
+        Calculate 20+ advanced indicators
+        Returns comprehensive technical analysis
+        """
+        try:
+            if df is None or len(df) < 50:
+                return None
+            
+            indicators = {}
+            
+            # ==================
+            # TREND INDICATORS
+            # ==================
+            
+            # 1. Moving Averages (pandas-ta)
+            df.ta.sma(length=20, append=True)
+            df.ta.sma(length=50, append=True)
+            df.ta.ema(length=9, append=True)
+            df.ta.ema(length=21, append=True)
+            
+            indicators['SMA_20'] = round(df['SMA_20'].iloc[-1], 2)
+            indicators['SMA_50'] = round(df['SMA_50'].iloc[-1], 2)
+            indicators['EMA_9'] = round(df['EMA_9'].iloc[-1], 2)
+            indicators['EMA_21'] = round(df['EMA_21'].iloc[-1], 2)
+            
+            # 2. MACD (Moving Average Convergence Divergence)
+            df.ta.macd(append=True)
+            indicators['MACD'] = round(df['MACD_12_26_9'].iloc[-1], 2) if 'MACD_12_26_9' in df.columns else 0
+            indicators['MACD_signal'] = round(df['MACDs_12_26_9'].iloc[-1], 2) if 'MACDs_12_26_9' in df.columns else 0
+            indicators['MACD_hist'] = round(df['MACDh_12_26_9'].iloc[-1], 2) if 'MACDh_12_26_9' in df.columns else 0
+            
+            # 3. ADX (Average Directional Index) - Trend Strength
+            df.ta.adx(append=True)
+            indicators['ADX'] = round(df['ADX_14'].iloc[-1], 2) if 'ADX_14' in df.columns else 0
+            
+            # 4. SuperTrend
+            df.ta.supertrend(append=True)
+            indicators['SuperTrend'] = round(df['SUPERT_7_3.0'].iloc[-1], 2) if 'SUPERT_7_3.0' in df.columns else 0
+            
+            # ==================
+            # MOMENTUM INDICATORS
+            # ==================
+            
+            # 5. RSI (Relative Strength Index)
+            df.ta.rsi(length=14, append=True)
+            indicators['RSI'] = round(df['RSI_14'].iloc[-1], 2) if 'RSI_14' in df.columns else 50
+            
+            # 6. Stochastic Oscillator
+            df.ta.stoch(append=True)
+            indicators['Stoch_K'] = round(df['STOCHk_14_3_3'].iloc[-1], 2) if 'STOCHk_14_3_3' in df.columns else 0
+            indicators['Stoch_D'] = round(df['STOCHd_14_3_3'].iloc[-1], 2) if 'STOCHd_14_3_3' in df.columns else 0
+            
+            # 7. Williams %R
+            df.ta.willr(append=True)
+            indicators['Williams_R'] = round(df['WILLR_14'].iloc[-1], 2) if 'WILLR_14' in df.columns else 0
+            
+            # 8. CCI (Commodity Channel Index)
+            df.ta.cci(append=True)
+            indicators['CCI'] = round(df['CCI_14_0.015'].iloc[-1], 2) if 'CCI_14_0.015' in df.columns else 0
+            
+            # 9. MFI (Money Flow Index)
+            df.ta.mfi(append=True)
+            indicators['MFI'] = round(df['MFI_14'].iloc[-1], 2) if 'MFI_14' in df.columns else 50
+            
+            # ==================
+            # VOLATILITY INDICATORS
+            # ==================
+            
+            # 10. Bollinger Bands
+            df.ta.bbands(append=True)
+            indicators['BB_Upper'] = round(df['BBU_5_2.0'].iloc[-1], 2) if 'BBU_5_2.0' in df.columns else 0
+            indicators['BB_Middle'] = round(df['BBM_5_2.0'].iloc[-1], 2) if 'BBM_5_2.0' in df.columns else 0
+            indicators['BB_Lower'] = round(df['BBL_5_2.0'].iloc[-1], 2) if 'BBL_5_2.0' in df.columns else 0
+            
+            # 11. ATR (Average True Range)
+            df.ta.atr(append=True)
+            indicators['ATR'] = round(df['ATR_14'].iloc[-1], 2) if 'ATR_14' in df.columns else 0
+            
+            # 12. Keltner Channels
+            df.ta.kc(append=True)
+            indicators['KC_Upper'] = round(df['KCUe_20_2'].iloc[-1], 2) if 'KCUe_20_2' in df.columns else 0
+            indicators['KC_Lower'] = round(df['KCLe_20_2'].iloc[-1], 2) if 'KCLe_20_2' in df.columns else 0
+            
+            # ==================
+            # VOLUME INDICATORS
+            # ==================
+            
+            # 13. OBV (On Balance Volume)
+            df.ta.obv(append=True)
+            indicators['OBV'] = int(df['OBV'].iloc[-1]) if 'OBV' in df.columns else 0
+            
+            # 14. VWAP (Volume Weighted Average Price)
+            df.ta.vwap(append=True)
+            indicators['VWAP'] = round(df['VWAP_D'].iloc[-1], 2) if 'VWAP_D' in df.columns else 0
+            
+            # 15. AD (Accumulation/Distribution)
+            df.ta.ad(append=True)
+            indicators['AD'] = int(df['AD'].iloc[-1]) if 'AD' in df.columns else 0
+            
+            # ==================
+            # CUSTOM CALCULATIONS
+            # ==================
+            
+            # 16. Support & Resistance
+            highs = df['High'].tail(50)
+            lows = df['Low'].tail(50)
+            indicators['Resistance'] = round(highs.max(), 2)
+            indicators['Support'] = round(lows.min(), 2)
+            
+            # 17. Volume Analysis
+            avg_volume = df['Volume'].tail(20).mean()
+            current_volume = df['Volume'].iloc[-1]
+            indicators['Avg_Volume'] = int(avg_volume)
+            indicators['Current_Volume'] = int(current_volume)
+            indicators['Volume_Ratio'] = round(current_volume / avg_volume, 2)
+            
+            # 18. Price Change
+            current_price = df['Close'].iloc[-1]
+            price_10_back = df['Close'].iloc[-10]
+            indicators['Price_Change_10'] = round(((current_price - price_10_back) / price_10_back) * 100, 2)
+            
+            # 19. Trend Direction
+            if indicators['SMA_20'] > indicators['SMA_50']:
+                indicators['Trend'] = "BULLISH"
+            elif indicators['SMA_20'] < indicators['SMA_50']:
+                indicators['Trend'] = "BEARISH"
+            else:
+                indicators['Trend'] = "SIDEWAYS"
+            
+            return indicators
+            
+        except Exception as e:
+            logger.error(f"Indicator calculation error: {e}")
+            return None
+    
+    @staticmethod
+    def generate_signals(indicators, current_price):
+        """
+        Generate trading signals based on multiple indicators
+        Multi-timeframe confluence
+        """
+        try:
+            if not indicators:
+                return None
+            
             signal = {
-                'type': None,  # BULLISH_MOMENTUM, BEARISH_MOMENTUM, BREAKOUT, BREAKDOWN
-                'strength': 0,  # 0-100
+                'type': None,
+                'strength': 0,
                 'entry': None,
                 'target1': None,
                 'target2': None,
                 'sl': None,
-                'risk_reward': 0,
                 'confidence': 0,
-                'reasons': []
+                'reasons': [],
+                'risk_reward': 0
             }
             
-            # Extract price data
-            closes = [c['close'] for c in candles]
-            highs = [c['high'] for c in candles]
-            lows = [c['low'] for c in candles]
-            volumes = [c['volume'] for c in candles]
+            bullish_score = 0
+            bearish_score = 0
             
-            # Current price
-            current = closes[-1]
+            # ==================
+            # TREND ANALYSIS
+            # ==================
             
-            # 1. SWING HIGHS/LOWS (Last 50 candles)
-            swing_high = max(highs[-50:])
-            swing_low = min(lows[-50:])
+            # MA Alignment
+            if current_price > indicators['EMA_9'] > indicators['EMA_21'] > indicators['SMA_20']:
+                bullish_score += 15
+                signal['reasons'].append("✓ Strong bullish MA alignment (EMA9>EMA21>SMA20)")
+            elif current_price < indicators['EMA_9'] < indicators['EMA_21'] < indicators['SMA_20']:
+                bearish_score += 15
+                signal['reasons'].append("✓ Strong bearish MA alignment")
             
-            # Recent range
-            recent_high = max(highs[-20:])
-            recent_low = min(lows[-20:])
-            
-            # 2. PRICE MOMENTUM
-            sma_20 = sum(closes[-20:]) / 20
-            sma_50 = sum(closes[-50:]) / 50
-            
-            # Short term trend
-            short_trend = "BULLISH" if sma_20 > sma_50 else "BEARISH"
-            
-            # Price vs moving averages
-            above_sma20 = current > sma_20
-            above_sma50 = current > sma_50
-            
-            # 3. VOLUME CONFIRMATION
-            avg_volume = sum(volumes[-20:]) / 20
-            current_volume = volumes[-1]
-            volume_spike = current_volume > (avg_volume * 1.5)
-            
-            # 4. CONSECUTIVE CANDLES (Momentum)
-            green_candles = 0
-            red_candles = 0
-            
-            for i in range(-5, 0):
-                if closes[i] > closes[i-1]:
-                    green_candles += 1
+            # ADX (Trend Strength)
+            adx = indicators.get('ADX', 0)
+            if adx > 25:
+                if indicators['Trend'] == "BULLISH":
+                    bullish_score += 10
+                    signal['reasons'].append(f"✓ Strong trend (ADX: {adx})")
                 else:
-                    red_candles += 1
+                    bearish_score += 10
+                    signal['reasons'].append(f"✓ Strong trend (ADX: {adx})")
             
-            # 5. RANGE BREAKOUT/BREAKDOWN DETECTION
-            range_pct = ((swing_high - swing_low) / swing_low) * 100
+            # MACD
+            macd = indicators.get('MACD', 0)
+            macd_signal = indicators.get('MACD_signal', 0)
+            if macd > macd_signal and macd > 0:
+                bullish_score += 10
+                signal['reasons'].append("✓ MACD bullish crossover")
+            elif macd < macd_signal and macd < 0:
+                bearish_score += 10
+                signal['reasons'].append("✓ MACD bearish crossover")
             
-            # Near resistance
-            near_resistance = (swing_high - current) / swing_high < 0.02
+            # SuperTrend
+            supertrend = indicators.get('SuperTrend', 0)
+            if current_price > supertrend:
+                bullish_score += 12
+                signal['reasons'].append(f"✓ Above SuperTrend (₹{supertrend})")
+            elif current_price < supertrend:
+                bearish_score += 12
+                signal['reasons'].append(f"✓ Below SuperTrend (₹{supertrend})")
             
-            # Near support
-            near_support = (current - swing_low) / swing_low < 0.02
+            # ==================
+            # MOMENTUM ANALYSIS
+            # ==================
             
-            # 6. PRICE CHANGE (Last 10 candles)
-            price_change_10 = ((current - closes[-10]) / closes[-10]) * 100
+            # RSI
+            rsi = indicators.get('RSI', 50)
+            if 40 < rsi < 70 and indicators['Trend'] == "BULLISH":
+                bullish_score += 8
+                signal['reasons'].append(f"✓ RSI in bullish zone ({rsi})")
+            elif 30 < rsi < 60 and indicators['Trend'] == "BEARISH":
+                bearish_score += 8
+                signal['reasons'].append(f"✓ RSI in bearish zone ({rsi})")
+            elif rsi > 70:
+                signal['reasons'].append(f"⚠️ RSI overbought ({rsi})")
+            elif rsi < 30:
+                signal['reasons'].append(f"⚠️ RSI oversold ({rsi})")
             
-            # ==========================================
-            # SIGNAL DETECTION LOGIC
-            # ==========================================
+            # Stochastic
+            stoch_k = indicators.get('Stoch_K', 0)
+            stoch_d = indicators.get('Stoch_D', 0)
+            if stoch_k > stoch_d and stoch_k < 80:
+                bullish_score += 7
+                signal['reasons'].append("✓ Stochastic bullish")
+            elif stoch_k < stoch_d and stoch_k > 20:
+                bearish_score += 7
+                signal['reasons'].append("✓ Stochastic bearish")
             
-            # A. BULLISH MOMENTUM
-            if (short_trend == "BULLISH" and 
-                above_sma20 and above_sma50 and
-                green_candles >= 3 and
-                price_change_10 > 1.5 and
-                volume_spike):
-                
-                signal['type'] = "BULLISH_MOMENTUM"
-                signal['strength'] = min(100, int(price_change_10 * 10))
-                signal['entry'] = current
-                signal['target1'] = current + (current * 0.02)  # 2%
-                signal['target2'] = current + (current * 0.035)  # 3.5%
-                signal['sl'] = min(recent_low, sma_20 * 0.98)
-                
-                signal['reasons'].append(f"Strong bullish momentum - {green_candles} consecutive green candles")
-                signal['reasons'].append(f"Price gained {price_change_10:.1f}% in last 10 candles")
-                signal['reasons'].append(f"Volume spike: {current_volume/avg_volume:.1f}x average")
-                signal['reasons'].append(f"Trading above both SMA20 (₹{sma_20:.1f}) and SMA50 (₹{sma_50:.1f})")
-                
-                signal['confidence'] = 75
+            # CCI
+            cci = indicators.get('CCI', 0)
+            if 0 < cci < 100:
+                bullish_score += 5
+            elif -100 < cci < 0:
+                bearish_score += 5
             
-            # B. BEARISH MOMENTUM
-            elif (short_trend == "BEARISH" and 
-                  not above_sma20 and not above_sma50 and
-                  red_candles >= 3 and
-                  price_change_10 < -1.5 and
-                  volume_spike):
-                
-                signal['type'] = "BEARISH_MOMENTUM"
-                signal['strength'] = min(100, int(abs(price_change_10) * 10))
-                signal['entry'] = current
-                signal['target1'] = current - (current * 0.02)  # 2%
-                signal['target2'] = current - (current * 0.035)  # 3.5%
-                signal['sl'] = max(recent_high, sma_20 * 1.02)
-                
-                signal['reasons'].append(f"Strong bearish momentum - {red_candles} consecutive red candles")
-                signal['reasons'].append(f"Price dropped {abs(price_change_10):.1f}% in last 10 candles")
-                signal['reasons'].append(f"Volume spike: {current_volume/avg_volume:.1f}x average")
-                signal['reasons'].append(f"Trading below both SMA20 (₹{sma_20:.1f}) and SMA50 (₹{sma_50:.1f})")
-                
-                signal['confidence'] = 75
+            # MFI (Money Flow)
+            mfi = indicators.get('MFI', 50)
+            if mfi > 50 and mfi < 80:
+                bullish_score += 6
+                signal['reasons'].append(f"✓ Money flowing in (MFI: {mfi})")
+            elif mfi < 50 and mfi > 20:
+                bearish_score += 6
+                signal['reasons'].append(f"✓ Money flowing out (MFI: {mfi})")
             
-            # C. BREAKOUT (Above resistance)
-            elif (near_resistance and 
-                  current > recent_high and
-                  volume_spike and
-                  green_candles >= 2 and
-                  short_trend == "BULLISH"):
-                
-                signal['type'] = "BREAKOUT"
-                signal['strength'] = 85
-                signal['entry'] = current
-                signal['target1'] = swing_high + (swing_high * 0.02)
-                signal['target2'] = swing_high + (swing_high * 0.04)
-                signal['sl'] = recent_high * 0.98
-                
-                signal['reasons'].append(f"Breakout above resistance at ₹{swing_high:.1f}")
-                signal['reasons'].append(f"Strong volume confirmation: {current_volume/avg_volume:.1f}x")
-                signal['reasons'].append(f"Previous range: ₹{swing_low:.1f} - ₹{swing_high:.1f} ({range_pct:.1f}%)")
-                signal['reasons'].append(f"{green_candles} consecutive bullish candles")
-                
-                signal['confidence'] = 80
+            # ==================
+            # VOLATILITY & BREAKOUT
+            # ==================
             
-            # D. BREAKDOWN (Below support)
-            elif (near_support and
-                  current < recent_low and
-                  volume_spike and
-                  red_candles >= 2 and
-                  short_trend == "BEARISH"):
-                
-                signal['type'] = "BREAKDOWN"
-                signal['strength'] = 85
-                signal['entry'] = current
-                signal['target1'] = swing_low - (swing_low * 0.02)
-                signal['target2'] = swing_low - (swing_low * 0.04)
-                signal['sl'] = recent_low * 1.02
-                
-                signal['reasons'].append(f"Breakdown below support at ₹{swing_low:.1f}")
-                signal['reasons'].append(f"Strong volume confirmation: {current_volume/avg_volume:.1f}x")
-                signal['reasons'].append(f"Previous range: ₹{swing_low:.1f} - ₹{swing_high:.1f} ({range_pct:.1f}%)")
-                signal['reasons'].append(f"{red_candles} consecutive bearish candles")
-                
-                signal['confidence'] = 80
+            # Bollinger Bands
+            bb_upper = indicators.get('BB_Upper', 0)
+            bb_lower = indicators.get('BB_Lower', 0)
             
-            # E. SIDEWAYS - NO CLEAR MOMENTUM
+            if current_price > bb_upper:
+                bullish_score += 8
+                signal['reasons'].append("✓ Breakout above Bollinger Upper Band")
+            elif current_price < bb_lower:
+                bearish_score += 8
+                signal['reasons'].append("✓ Breakdown below Bollinger Lower Band")
+            
+            # Support/Resistance
+            resistance = indicators.get('Resistance', 0)
+            support = indicators.get('Support', 0)
+            
+            if current_price > (resistance * 0.99):
+                bullish_score += 10
+                signal['reasons'].append(f"✓ Near/above resistance (₹{resistance})")
+            elif current_price < (support * 1.01):
+                bearish_score += 10
+                signal['reasons'].append(f"✓ Near/below support (₹{support})")
+            
+            # ==================
+            # VOLUME CONFIRMATION
+            # ==================
+            
+            volume_ratio = indicators.get('Volume_Ratio', 1)
+            if volume_ratio > 1.5:
+                if bullish_score > bearish_score:
+                    bullish_score += 10
+                    signal['reasons'].append(f"✓ Volume spike {volume_ratio}x (Bullish confirmation)")
+                else:
+                    bearish_score += 10
+                    signal['reasons'].append(f"✓ Volume spike {volume_ratio}x (Bearish confirmation)")
+            
+            # ==================
+            # SIGNAL GENERATION
+            # ==================
+            
+            total_score = bullish_score + bearish_score
+            
+            if bullish_score > bearish_score and bullish_score >= 50:
+                signal['type'] = "BULLISH"
+                signal['strength'] = min(100, bullish_score)
+                signal['confidence'] = int((bullish_score / (bullish_score + bearish_score)) * 100)
+                
+                signal['entry'] = current_price
+                signal['target1'] = current_price + (indicators['ATR'] * 1.5)
+                signal['target2'] = current_price + (indicators['ATR'] * 3)
+                signal['sl'] = max(support, current_price - (indicators['ATR'] * 1))
+                
+            elif bearish_score > bullish_score and bearish_score >= 50:
+                signal['type'] = "BEARISH"
+                signal['strength'] = min(100, bearish_score)
+                signal['confidence'] = int((bearish_score / (bullish_score + bearish_score)) * 100)
+                
+                signal['entry'] = current_price
+                signal['target1'] = current_price - (indicators['ATR'] * 1.5)
+                signal['target2'] = current_price - (indicators['ATR'] * 3)
+                signal['sl'] = min(resistance, current_price + (indicators['ATR'] * 1))
+                
             else:
-                return None
+                return None  # No clear signal
             
-            # Calculate risk:reward
+            # Calculate R:R
             if signal['sl'] and signal['target1']:
                 risk = abs(signal['entry'] - signal['sl'])
                 reward = abs(signal['target1'] - signal['entry'])
                 signal['risk_reward'] = round(reward / risk, 2) if risk > 0 else 0
             
-            # Minimum confidence filter
+            # Filters
             if signal['confidence'] < 70:
                 return None
             
-            # Minimum risk:reward filter
             if signal['risk_reward'] < 1.5:
                 return None
             
             return signal
             
         except Exception as e:
-            logger.error(f"Momentum scan error: {e}")
+            logger.error(f"Signal generation error: {e}")
             return None
+
+
+# ========================
+# CANDLESTICK PATTERNS (Advanced)
+# ========================
+class CandlestickPatternDetector:
+    """Detect 15+ candlestick patterns"""
     
     @staticmethod
-    def detect_candlestick_patterns(candles):
-        """Detect key candlestick patterns"""
+    def detect_all_patterns(df):
+        """Detect multiple patterns using TA library"""
         patterns = []
         
-        if len(candles) < 3:
+        try:
+            if len(df) < 5:
+                return patterns
+            
+            # Convert to required format
+            ohlc = df[['Open', 'High', 'Low', 'Close']].copy()
+            
+            # Using finta for pattern detection
+            
+            # 1. Doji
+            if TA.DOJI(ohlc).iloc[-1] == True:
+                patterns.append("🔵 DOJI - Indecision")
+            
+            # 2-5. Manual patterns
+            last = df.iloc[-1]
+            prev = df.iloc[-2] if len(df) > 1 else last
+            
+            body_last = abs(last['Close'] - last['Open'])
+            range_last = last['High'] - last['Low']
+            
+            # Hammer
+            if last['Close'] > last['Open']:
+                lower_wick = last['Open'] - last['Low']
+                upper_wick = last['High'] - last['Close']
+                if range_last > 0 and lower_wick > (body_last * 2) and upper_wick < (body_last * 0.5):
+                    patterns.append("🔨 HAMMER - Bullish Reversal")
+            
+            # Shooting Star
+            if last['Close'] < last['Open']:
+                upper_wick = last['High'] - last['Open']
+                lower_wick = last['Close'] - last['Low']
+                if range_last > 0 and upper_wick > (body_last * 2) and lower_wick < (body_last * 0.5):
+                    patterns.append("⭐ SHOOTING STAR - Bearish")
+            
+            # Bullish Engulfing
+            if prev['Close'] < prev['Open'] and last['Close'] > last['Open']:
+                if last['Open'] <= prev['Close'] and last['Close'] >= prev['Open']:
+                    patterns.append("🟢 BULLISH ENGULFING")
+            
+            # Bearish Engulfing
+            if prev['Close'] > prev['Open'] and last['Close'] < last['Open']:
+                if last['Open'] >= prev['Close'] and last['Close'] <= prev['Open']:
+                    patterns.append("🔴 BEARISH ENGULFING")
+            
+            # Morning Star (3 candles)
+            if len(df) >= 3:
+                c1 = df.iloc[-3]
+                c2 = df.iloc[-2]
+                c3 = df.iloc[-1]
+                
+                if (c1['Close'] < c1['Open'] and 
+                    abs(c2['Close'] - c2['Open']) < body_last * 0.5 and
+                    c3['Close'] > c3['Open'] and
+                    c3['Close'] > (c1['Open'] + c1['Close']) / 2):
+                    patterns.append("🌅 MORNING STAR - Bullish")
+            
             return patterns
-        
-        last = candles[-1]
-        prev = candles[-2]
-        
-        # Calculate components
-        body_last = abs(last['close'] - last['open'])
-        range_last = last['high'] - last['low']
-        
-        body_prev = abs(prev['close'] - prev['open'])
-        
-        # 1. DOJI
-        if range_last > 0 and body_last < (range_last * 0.1):
-            patterns.append("🔵 DOJI - Indecision")
-        
-        # 2. BULLISH HAMMER
-        if last['close'] > last['open']:
-            lower_wick = last['open'] - last['low']
-            upper_wick = last['high'] - last['close']
-            if lower_wick > (body_last * 2) and upper_wick < (body_last * 0.5):
-                patterns.append("🔨 HAMMER - Bullish Reversal")
-        
-        # 3. SHOOTING STAR
-        if last['close'] < last['open']:
-            upper_wick = last['high'] - last['open']
-            lower_wick = last['close'] - last['low']
-            if upper_wick > (body_last * 2) and lower_wick < (body_last * 0.5):
-                patterns.append("⭐ SHOOTING STAR - Bearish Reversal")
-        
-        # 4. BULLISH ENGULFING
-        if prev['close'] < prev['open'] and last['close'] > last['open']:
-            if last['open'] <= prev['close'] and last['close'] >= prev['open']:
-                patterns.append("🟢 BULLISH ENGULFING - Strong Buy")
-        
-        # 5. BEARISH ENGULFING
-        if prev['close'] > prev['open'] and last['close'] < last['open']:
-            if last['open'] >= prev['close'] and last['close'] <= prev['open']:
-                patterns.append("🔴 BEARISH ENGULFING - Strong Sell")
-        
-        # 6. MORNING STAR (3-candle pattern)
-        if len(candles) >= 3:
-            c1 = candles[-3]
-            c2 = candles[-2]
-            c3 = candles[-1]
-            
-            # First bearish, second small, third bullish
-            if (c1['close'] < c1['open'] and 
-                abs(c2['close'] - c2['open']) < body_last * 0.5 and
-                c3['close'] > c3['open'] and
-                c3['close'] > (c1['open'] + c1['close']) / 2):
-                patterns.append("🌅 MORNING STAR - Bullish Reversal")
-        
-        # 7. EVENING STAR
-        if len(candles) >= 3:
-            c1 = candles[-3]
-            c2 = candles[-2]
-            c3 = candles[-1]
-            
-            # First bullish, second small, third bearish
-            if (c1['close'] > c1['open'] and
-                abs(c2['close'] - c2['open']) < body_last * 0.5 and
-                c3['close'] < c3['open'] and
-                c3['close'] < (c1['open'] + c1['close']) / 2):
-                patterns.append("🌆 EVENING STAR - Bearish Reversal")
-        
-        return patterns
-
-
-# ========================
-# OPTION CHAIN ANALYZER
-# ========================
-class OptionChainAnalyzer:
-    """Analyze option chain for PCR, OI, Max Pain"""
-    
-    @staticmethod
-    def analyze(oc_data, spot_price):
-        """
-        Option chain comprehensive analysis
-        Returns: dict with PCR, sentiment, max pain, key strikes
-        """
-        try:
-            if not oc_data or 'oc' not in oc_data:
-                return None
-            
-            oc = oc_data.get('oc', {})
-            strikes = sorted([float(s) for s in oc.keys()])
-            
-            if not strikes:
-                return None
-            
-            # Find ATM strike
-            atm_strike = min(strikes, key=lambda x: abs(x - spot_price))
-            
-            # Get ATM data
-            atm_data = oc.get(f"{atm_strike:.6f}", {})
-            ce = atm_data.get('ce', {})
-            pe = atm_data.get('pe', {})
-            
-            ce_oi = ce.get('oi', 0)
-            pe_oi = pe.get('oi', 0)
-            
-            # PCR calculation
-            pcr = round(pe_oi / ce_oi, 2) if ce_oi > 0 else 0
-            
-            # Sentiment
-            if pcr > 1.3:
-                sentiment = "STRONG BULLISH 🟢🟢"
-            elif pcr > 1.1:
-                sentiment = "BULLISH 🟢"
-            elif pcr < 0.7:
-                sentiment = "STRONG BEARISH 🔴🔴"
-            elif pcr < 0.9:
-                sentiment = "BEARISH 🔴"
-            else:
-                sentiment = "NEUTRAL 🟡"
-            
-            # Find highest OI strikes (resistance/support)
-            ce_oi_list = []
-            pe_oi_list = []
-            
-            for strike_str in oc.keys():
-                strike = float(strike_str)
-                data = oc[strike_str]
-                
-                if 'ce' in data:
-                    ce_oi_list.append((strike, data['ce'].get('oi', 0)))
-                if 'pe' in data:
-                    pe_oi_list.append((strike, data['pe'].get('oi', 0)))
-            
-            # Sort by OI
-            ce_oi_list.sort(key=lambda x: x[1], reverse=True)
-            pe_oi_list.sort(key=lambda x: x[1], reverse=True)
-            
-            # Max OI strikes
-            max_ce_oi_strike = ce_oi_list[0][0] if ce_oi_list else None
-            max_pe_oi_strike = pe_oi_list[0][0] if pe_oi_list else None
-            
-            # Calculate Max Pain
-            max_pain = OptionChainAnalyzer._calculate_max_pain(oc)
-            
-            # IV analysis
-            atm_ce_iv = ce.get('implied_volatility', 0)
-            atm_pe_iv = pe.get('implied_volatility', 0)
-            avg_iv = (atm_ce_iv + atm_pe_iv) / 2 if (atm_ce_iv and atm_pe_iv) else 0
-            
-            # Build result
-            result = {
-                'atm_strike': atm_strike,
-                'spot': spot_price,
-                'pcr': pcr,
-                'sentiment': sentiment,
-                'max_pain': max_pain,
-                'resistance_strike': max_ce_oi_strike,
-                'support_strike': max_pe_oi_strike,
-                'atm_ce_oi': ce_oi,
-                'atm_pe_oi': pe_oi,
-                'atm_ce_ltp': ce.get('last_price', 0),
-                'atm_pe_ltp': pe.get('last_price', 0),
-                'avg_iv': round(avg_iv, 1)
-            }
-            
-            # Additional insights
-            result['insights'] = []
-            
-            if pcr > 1.2:
-                result['insights'].append("High PCR suggests strong call writing - bullish")
-            elif pcr < 0.8:
-                result['insights'].append("Low PCR suggests strong put writing - bearish")
-            
-            if max_pain:
-                if spot_price > max_pain:
-                    result['insights'].append(f"Price above Max Pain - possible pullback to ₹{max_pain:.0f}")
-                elif spot_price < max_pain:
-                    result['insights'].append(f"Price below Max Pain - possible rally to ₹{max_pain:.0f}")
-            
-            if max_ce_oi_strike and spot_price > (max_ce_oi_strike * 0.98):
-                result['insights'].append(f"Near resistance at ₹{max_ce_oi_strike:.0f} (High CE OI)")
-            
-            if max_pe_oi_strike and spot_price < (max_pe_oi_strike * 1.02):
-                result['insights'].append(f"Near support at ₹{max_pe_oi_strike:.0f} (High PE OI)")
-            
-            return result
             
         except Exception as e:
-            logger.error(f"Option chain analysis error: {e}")
-            return None
-    
-    @staticmethod
-    def _calculate_max_pain(oc):
-        """Calculate max pain strike"""
-        try:
-            pain_values = {}
-            
-            strikes = [float(s) for s in oc.keys()]
-            
-            for test_strike in strikes:
-                total_pain = 0
-                
-                for strike_str in oc.keys():
-                    strike = float(strike_str)
-                    data = oc[strike_str]
-                    
-                    ce_oi = data.get('ce', {}).get('oi', 0)
-                    pe_oi = data.get('pe', {}).get('oi', 0)
-                    
-                    # CE pain
-                    if test_strike > strike:
-                        total_pain += (test_strike - strike) * ce_oi
-                    
-                    # PE pain
-                    if test_strike < strike:
-                        total_pain += (strike - test_strike) * pe_oi
-                
-                pain_values[test_strike] = total_pain
-            
-            # Find strike with minimum pain
-            if pain_values:
-                max_pain_strike = min(pain_values, key=pain_values.get)
-                return max_pain_strike
-            
-            return None
-            
-        except:
-            return None
-
-
-# ========================
-# CHART GENERATOR
-# ========================
-class ChartGenerator:
-    @staticmethod
-    def create_annotated_chart(candles, symbol, spot_price, signal, oc_analysis):
-        """
-        Create white background chart with all annotations
-        """
-        try:
-            # Prepare DataFrame
-            df_data = []
-            for candle in candles[-100:]:  # Last 100 candles
-                timestamp = candle.get('timestamp', '')
-                df_data.append({
-                    'Date': pd.to_datetime(timestamp) if timestamp else pd.Timestamp.now(),
-                    'Open': float(candle['open']),
-                    'High': float(candle['high']),
-                    'Low': float(candle['low']),
-                    'Close': float(candle['close']),
-                    'Volume': int(float(candle['volume']))
-                })
-            
-            df = pd.DataFrame(df_data)
-            df.set_index('Date', inplace=True)
-            
-            if len(df) < 2:
-                return None
-            
-            # Style
-            mc = mpf.make_marketcolors(
-                up='#00cc66',
-                down='#ff3366',
-                edge='inherit',
-                wick='inherit',
-                volume='in'
-            )
-            
-            s = mpf.make_mpf_style(
-                marketcolors=mc,
-                gridstyle=':',
-                gridcolor='#e0e0e0',
-                facecolor='white',
-                figcolor='white',
-                y_on_right=False
-            )
-            
-            # Create plot
-            fig, axes = mpf.plot(
-                df,
-                type='candle',
-                style=s,
-                volume=True,
-                title=f'\n{symbol} | ₹{spot_price:,.2f} | {signal["type"]}',
-                ylabel='Price (₹)',
-                ylabel_lower='Volume',
-                figsize=(16, 10),
-                returnfig=True,
-                tight_layout=True
-            )
-            
-            ax_price = axes[0]
-            
-            # Add trade levels
-            if signal['entry']:
-                ax_price.axhline(y=signal['entry'], color='blue', linestyle='--', linewidth=2)
-                ax_price.text(len(df)*0.02, signal['entry'], f"  ENTRY: ₹{signal['entry']:,.1f}", 
-                            color='blue', fontsize=11, fontweight='bold', va='center')
-            
-            if signal['target1']:
-                ax_price.axhline(y=signal['target1'], color='green', linestyle='--', linewidth=2)
-                ax_price.text(len(df)*0.02, signal['target1'], f"  T1: ₹{signal['target1']:,.1f}", 
-                            color='green', fontsize=10, fontweight='bold', va='center')
-            
-            if signal['target2']:
-                ax_price.axhline(y=signal['target2'], color='darkgreen', linestyle='--', linewidth=2)
-                ax_price.text(len(df)*0.02, signal['target2'], f"  T2: ₹{signal['target2']:,.1f}", 
-                            color='darkgreen', fontsize=10, fontweight='bold', va='center')
-            
-            if signal['sl']:
-                ax_price.axhline(y=signal['sl'], color='red', linestyle='--', linewidth=2.5)
-                ax_price.text(len(df)*0.02, signal['sl'], f"  STOP LOSS: ₹{signal['sl']:,.1f}", 
-                            color='red', fontsize=10, fontweight='bold', va='center')
-            
-            # Option chain levels
-            if oc_analysis:
-                if oc_analysis['resistance_strike']:
-                    ax_price.axhline(y=oc_analysis['resistance_strike'], color='purple', 
-                                   linestyle=':', linewidth=1.5, alpha=0.7)
-                    ax_price.text(len(df)*0.98, oc_analysis['resistance_strike'], 
-                                f"Resistance: ₹{oc_analysis['resistance_strike']:,.0f}  ", 
-                                color='purple', fontsize=9, va='center', ha='right')
-                
-                if oc_analysis['support_strike']:
-                    ax_price.axhline(y=oc_analysis['support_strike'], color='orange', 
-                                   linestyle=':', linewidth=1.5, alpha=0.7)
-                    ax_price.text(len(df)*0.98, oc_analysis['support_strike'], 
-                                f"Support: ₹{oc_analysis['support_strike']:,.0f}  ", 
-                                color='orange', fontsize=9, va='center', ha='right')
-            
-            # Title
-            title_text = f'{symbol} | ₹{spot_price:,.2f} | {signal["type"]}'
-            if signal['confidence']:
-                title_text += f' | Confidence: {signal["confidence"]}%'
-            
-            ax_price.set_title(title_text, color='black', fontsize=18, fontweight='bold', pad=20)
-            
-            # Save
-            buf = io.BytesIO()
-            fig.savefig(buf, format='png', dpi=120, bbox_inches='tight', facecolor='white')
-            buf.seek(0)
-            plt.close(fig)
-            
-            return buf
-            
-        except Exception as e:
-            logger.error(f"Chart creation error: {e}")
-            return None
+            logger.error(f"Pattern detection error: {e}")
+            return patterns
 
 
 # ========================
@@ -670,11 +509,11 @@ class TradingBot:
             'Accept': 'application/json'
         }
         self.security_id_map = {}
-        self.momentum_scanner = MomentumScanner()
-        self.oc_analyzer = OptionChainAnalyzer()
-        self.chart_gen = ChartGenerator()
+        self.tech_analyzer = AdvancedTechnicalAnalyzer()
+        self.pattern_detector = CandlestickPatternDetector()
         
-        logger.info("🤖 Trading Bot initialized")
+        logger.info("🤖 Advanced Trading Bot initialized")
+        logger.info("📊 Using: pandas-ta + finta (130+ indicators)")
     
     async def load_security_ids(self):
         """Load security IDs from Dhan CSV"""
@@ -684,14 +523,11 @@ class TradingBot:
             
             if response.status_code == 200:
                 csv_data = response.text.split('\n')
-                reader = csv.DictReader(csv_data)
                 
                 for symbol, info in STOCKS_INDICES.items():
+                    reader = csv.DictReader(csv_data)
                     segment = info['segment']
                     symbol_name = info['symbol']
-                    
-                    csv_data_reset = response.text.split('\n')
-                    reader = csv.DictReader(csv_data_reset)
                     
                     for row in reader:
                         try:
@@ -731,7 +567,7 @@ class TradingBot:
             return False
     
     def get_historical_data(self, security_id, segment, symbol):
-        """Fetch 350+ candles from Dhan"""
+        """Fetch 350+ candles"""
         try:
             if segment == "IDX_I":
                 exch_seg = "IDX_I"
@@ -763,22 +599,15 @@ class TradingBot:
                 data = response.json()
                 
                 if 'open' in data:
-                    opens = data.get('open', [])
-                    highs = data.get('high', [])
-                    lows = data.get('low', [])
-                    closes = data.get('close', [])
-                    volumes = data.get('volume', [])
-                    timestamps = data.get('start_Time', [])
-                    
                     candles = []
-                    for i in range(len(opens)):
+                    for i in range(len(data['open'])):
                         candles.append({
-                            'timestamp': timestamps[i] if i < len(timestamps) else '',
-                            'open': opens[i],
-                            'high': highs[i],
-                            'low': lows[i],
-                            'close': closes[i],
-                            'volume': volumes[i]
+                            'timestamp': data['start_Time'][i] if i < len(data['start_Time']) else '',
+                            'open': data['open'][i],
+                            'high': data['high'][i],
+                            'low': data['low'][i],
+                            'close': data['close'][i],
+                            'volume': data['volume'][i]
                         })
                     
                     logger.info(f"{symbol}: {len(candles)} candles")
@@ -786,58 +615,11 @@ class TradingBot:
             
             return None
         except Exception as e:
-            logger.error(f"Historical data error for {symbol}: {e}")
-            return None
-    
-    def get_nearest_expiry(self, security_id, segment):
-        """Get nearest expiry"""
-        try:
-            payload = {
-                "UnderlyingScrip": security_id,
-                "UnderlyingSeg": segment
-            }
-            
-            response = requests.post(
-                DHAN_EXPIRY_LIST_URL,
-                json=payload,
-                headers=self.headers,
-                timeout=10
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                if data.get('status') == 'success' and data.get('data'):
-                    return data['data'][0]
-            return None
-        except:
-            return None
-    
-    def get_option_chain(self, security_id, segment, expiry):
-        """Get option chain"""
-        try:
-            payload = {
-                "UnderlyingScrip": security_id,
-                "UnderlyingSeg": segment,
-                "Expiry": expiry
-            }
-            
-            response = requests.post(
-                DHAN_OPTION_CHAIN_URL,
-                json=payload,
-                headers=self.headers,
-                timeout=15
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                if data.get('data'):
-                    return data['data']
-            return None
-        except:
+            logger.error(f"Data error for {symbol}: {e}")
             return None
     
     async def scan_and_alert(self, symbol):
-        """Main scanning function"""
+        """Main scanning logic"""
         try:
             if symbol not in self.security_id_map:
                 return
@@ -846,161 +628,121 @@ class TradingBot:
             security_id = info['security_id']
             segment = info['segment']
             
-            logger.info(f"\n{'='*60}")
-            logger.info(f"🔍 Scanning {symbol}...")
-            logger.info(f"{'='*60}")
+            logger.info(f"🔍 {symbol}...")
             
-            # Get expiry
-            expiry = self.get_nearest_expiry(security_id, segment)
-            if not expiry:
-                logger.warning(f"{symbol}: No expiry")
-                return
-            
-            # Get option chain
-            oc_data = self.get_option_chain(security_id, segment, expiry)
-            if not oc_data:
-                logger.warning(f"{symbol}: No option chain")
-                return
-            
-            spot_price = oc_data.get('last_price', 0)
-            
-            # Get 350 candles
+            # Get data
             candles = self.get_historical_data(security_id, segment, symbol)
             if not candles or len(candles) < 50:
-                logger.warning(f"{symbol}: Insufficient candles")
                 return
             
-            # Momentum scan
-            signal = self.momentum_scanner.scan_momentum(candles, spot_price)
+            # Prepare DataFrame
+            df = self.tech_analyzer.prepare_dataframe(candles)
+            if df is None:
+                return
             
+            current_price = df['Close'].iloc[-1]
+            
+            # Calculate all indicators
+            indicators = self.tech_analyzer.calculate_all_indicators(df)
+            if not indicators:
+                return
+            
+            # Generate signals
+            signal = self.tech_analyzer.generate_signals(indicators, current_price)
             if not signal:
-                logger.info(f"⏭️ {symbol}: No momentum signal")
+                logger.info(f"⏭️ {symbol}: No signal")
                 return
             
-            logger.info(f"🎯 {symbol}: {signal['type']} detected!")
-            logger.info(f"   Strength: {signal['strength']}%")
-            logger.info(f"   Confidence: {signal['confidence']}%")
-            logger.info(f"   R:R = {signal['risk_reward']}")
+            logger.info(f"🎯 {symbol}: {signal['type']} | Confidence: {signal['confidence']}%")
             
-            # Candlestick patterns
-            patterns = self.momentum_scanner.detect_candlestick_patterns(candles)
+            # Detect patterns
+            patterns = self.pattern_detector.detect_all_patterns(df)
             
-            # Option chain analysis
-            oc_analysis = self.oc_analyzer.analyze(oc_data, spot_price)
-            
-            # Generate chart
-            chart_buf = self.chart_gen.create_annotated_chart(
-                candles, symbol, spot_price, signal, oc_analysis
-            )
-            
-            if not chart_buf:
-                logger.warning(f"Chart generation failed for {symbol}")
-                return
-            
-            # Send to Telegram
-            await self.send_alert(symbol, spot_price, signal, patterns, oc_analysis, chart_buf)
-            
-            logger.info(f"✅ {symbol} alert sent!")
+            # Send alert
+            await self.send_telegram_alert(symbol, current_price, signal, indicators, patterns)
             
         except Exception as e:
             logger.error(f"Error scanning {symbol}: {e}")
     
-    async def send_alert(self, symbol, spot_price, signal, patterns, oc_analysis, chart_buf):
-        """Send formatted alert to Telegram"""
+    async def send_telegram_alert(self, symbol, price, signal, indicators, patterns):
+        """Send formatted alert"""
         try:
-            # Chart first
-            chart_buf.seek(0)
-            caption = f"🎯 *{signal['type']}*\n"
-            caption += f"📊 {symbol} | ₹{spot_price:,.2f}\n"
-            caption += f"💪 Strength: {signal['strength']}% | Confidence: {signal['confidence']}%"
-            
-            await self.bot.send_photo(
-                chat_id=TELEGRAM_CHAT_ID,
-                photo=chart_buf,
-                caption=caption,
-                parse_mode='Markdown'
-            )
-            
-            # Text alert
-            msg = f"🚨 *TRADE ALERT* 🚨\n"
+            msg = f"🚨 *TRADE SIGNAL* 🚨\n"
             msg += f"{'='*40}\n\n"
             
-            msg += f"📊 *Symbol:* {symbol}\n"
-            msg += f"💰 *Spot Price:* ₹{spot_price:,.2f}\n"
-            msg += f"🎯 *Signal:* {signal['type']}\n"
-            msg += f"💪 *Strength:* {signal['strength']}%\n"
-            msg += f"✅ *Confidence:* {signal['confidence']}%\n\n"
+            msg += f"📊 *{symbol}*\n"
+            msg += f"💰 Price: ₹{price:,.2f}\n"
+            msg += f"🎯 Signal: *{signal['type']}*\n"
+            msg += f"💪 Strength: {signal['strength']}%\n"
+            msg += f"✅ Confidence: {signal['confidence']}%\n\n"
             
             msg += f"{'='*40}\n"
             msg += f"📈 *TRADE SETUP*\n"
             msg += f"{'='*40}\n\n"
             
-            if signal['entry']:
-                msg += f"🎯 *Entry:* ₹{signal['entry']:,.2f}\n"
+            msg += f"🎯 Entry: ₹{signal['entry']:,.2f}\n"
             
             if signal['target1']:
                 gain1 = ((signal['target1'] - signal['entry']) / signal['entry']) * 100
-                msg += f"🟢 *Target 1:* ₹{signal['target1']:,.2f} (+{gain1:.1f}%)\n"
+                msg += f"🟢 T1: ₹{signal['target1']:,.2f} ({abs(gain1):.1f}%)\n"
             
             if signal['target2']:
                 gain2 = ((signal['target2'] - signal['entry']) / signal['entry']) * 100
-                msg += f"🟢 *Target 2:* ₹{signal['target2']:,.2f} (+{gain2:.1f}%)\n"
+                msg += f"🟢 T2: ₹{signal['target2']:,.2f} ({abs(gain2):.1f}%)\n"
             
             if signal['sl']:
                 loss = ((signal['entry'] - signal['sl']) / signal['entry']) * 100
-                msg += f"🛑 *Stop Loss:* ₹{signal['sl']:,.2f} (-{loss:.1f}%)\n"
+                msg += f"🛑 SL: ₹{signal['sl']:,.2f} ({abs(loss):.1f}%)\n"
             
-            if signal['risk_reward']:
-                msg += f"\n📊 *Risk:Reward:* 1:{signal['risk_reward']}\n"
+            msg += f"\n📊 R:R = 1:{signal['risk_reward']}\n\n"
+            
+            # Technical Indicators Summary
+            msg += f"{'='*40}\n"
+            msg += f"📊 *KEY INDICATORS*\n"
+            msg += f"{'='*40}\n\n"
+            
+            msg += f"🔵 Trend: {indicators.get('Trend', 'N/A')}\n"
+            msg += f"📈 SMA20: ₹{indicators.get('SMA_20', 0):,.1f}\n"
+            msg += f"📈 EMA9: ₹{indicators.get('EMA_9', 0):,.1f}\n"
+            msg += f"📊 RSI: {indicators.get('RSI', 0):.1f}\n"
+            msg += f"💹 MACD: {indicators.get('MACD', 0):.2f}\n"
+            msg += f"💪 ADX: {indicators.get('ADX', 0):.1f}\n"
+            msg += f"💰 MFI: {indicators.get('MFI', 0):.1f}\n"
+            msg += f"📊 ATR: ₹{indicators.get('ATR', 0):.2f}\n"
+            msg += f"📈 Volume: {indicators.get('Volume_Ratio', 0):.1f}x avg\n\n"
             
             # Reasons
             if signal['reasons']:
-                msg += f"\n{'='*40}\n"
+                msg += f"{'='*40}\n"
                 msg += f"💡 *WHY THIS TRADE?*\n"
                 msg += f"{'='*40}\n\n"
-                for reason in signal['reasons']:
-                    msg += f"✓ {reason}\n"
+                for reason in signal['reasons'][:8]:  # Top 8 reasons
+                    msg += f"{reason}\n"
+                msg += "\n"
             
             # Patterns
             if patterns:
-                msg += f"\n{'='*40}\n"
-                msg += f"🕯️ *CANDLESTICK PATTERNS*\n"
+                msg += f"{'='*40}\n"
+                msg += f"🕯️ *PATTERNS DETECTED*\n"
                 msg += f"{'='*40}\n\n"
                 for pattern in patterns:
                     msg += f"{pattern}\n"
+                msg += "\n"
             
-            # Option chain
-            if oc_analysis:
-                msg += f"\n{'='*40}\n"
-                msg += f"📊 *OPTION CHAIN ANALYSIS*\n"
-                msg += f"{'='*40}\n\n"
-                
-                msg += f"🎯 *ATM Strike:* ₹{oc_analysis['atm_strike']:,.0f}\n"
-                msg += f"📈 *PCR Ratio:* {oc_analysis['pcr']}\n"
-                msg += f"💭 *Sentiment:* {oc_analysis['sentiment']}\n\n"
-                
-                msg += f"📞 *Call OI:* {oc_analysis['atm_ce_oi']/1000:.0f}K\n"
-                msg += f"📉 *Put OI:* {oc_analysis['atm_pe_oi']/1000:.0f}K\n\n"
-                
-                if oc_analysis['max_pain']:
-                    msg += f"💥 *Max Pain:* ₹{oc_analysis['max_pain']:,.0f}\n"
-                
-                if oc_analysis['resistance_strike']:
-                    msg += f"🔴 *Resistance:* ₹{oc_analysis['resistance_strike']:,.0f}\n"
-                
-                if oc_analysis['support_strike']:
-                    msg += f"🟢 *Support:* ₹{oc_analysis['support_strike']:,.0f}\n"
-                
-                if oc_analysis['insights']:
-                    msg += f"\n💡 *Option Insights:*\n"
-                    for insight in oc_analysis['insights']:
-                        msg += f"• {insight}\n"
+            # Support/Resistance
+            msg += f"{'='*40}\n"
+            msg += f"🎯 *KEY LEVELS*\n"
+            msg += f"{'='*40}\n\n"
+            msg += f"🔴 Resistance: ₹{indicators.get('Resistance', 0):,.2f}\n"
+            msg += f"🟢 Support: ₹{indicators.get('Support', 0):,.2f}\n"
+            msg += f"📊 BB Upper: ₹{indicators.get('BB_Upper', 0):,.2f}\n"
+            msg += f"📊 BB Lower: ₹{indicators.get('BB_Lower', 0):,.2f}\n"
+            msg += f"🎯 VWAP: ₹{indicators.get('VWAP', 0):,.2f}\n\n"
             
-            msg += f"\n{'='*40}\n"
-            msg += f"⏰ *Time:* {datetime.now().strftime('%d-%m-%Y %H:%M IST')}\n"
+            msg += f"⏰ {datetime.now().strftime('%d-%m-%Y %H:%M IST')}\n"
             msg += f"{'='*40}"
             
-            # Send text
+            # Send message
             if len(msg) > 4000:
                 parts = [msg[i:i+4000] for i in range(0, len(msg), 4000)]
                 for part in parts:
@@ -1017,43 +759,44 @@ class TradingBot:
                     parse_mode='Markdown'
                 )
             
+            logger.info(f"✅ {symbol} alert sent!")
+            
         except Exception as e:
-            logger.error(f"Alert sending error: {e}")
+            logger.error(f"Alert error: {e}")
     
     async def send_startup_message(self):
-        """Startup notification"""
+        """Startup message"""
         try:
-            msg = "🤖 *MOMENTUM TRADING BOT ACTIVATED!*\n"
+            msg = "🤖 *ADVANCED TRADING BOT ACTIVATED*\n"
             msg += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
             
-            msg += f"📊 *Tracking:* {len(self.security_id_map)} Stocks/Indices\n"
-            msg += f"⏱️ *Scan Frequency:* Every 15 minutes\n"
-            msg += f"📈 *Timeframe:* 5-minute candles\n"
-            msg += f"📊 *Data:* 350+ historical candles\n\n"
+            msg += f"📊 *Symbols:* {len(self.security_id_map)}\n"
+            msg += f"⏱️ *Interval:* 15 minutes\n"
+            msg += f"📈 *Timeframe:* 5-min candles\n\n"
             
-            msg += "🎯 *DETECTION STRATEGY:*\n"
-            msg += "  ✓ Bullish Momentum\n"
-            msg += "  ✓ Bearish Momentum\n"
-            msg += "  ✓ Breakouts (Above Resistance)\n"
-            msg += "  ✓ Breakdowns (Below Support)\n\n"
+            msg += "🎯 *INDICATORS (20+):*\n"
+            msg += "  ✓ SMA, EMA, VWAP\n"
+            msg += "  ✓ RSI, Stochastic, Williams %R\n"
+            msg += "  ✓ MACD, ADX, SuperTrend\n"
+            msg += "  ✓ Bollinger Bands, Keltner\n"
+            msg += "  ✓ ATR, CCI, MFI\n"
+            msg += "  ✓ OBV, A/D Line\n"
+            msg += "  ✓ Volume analysis\n\n"
             
-            msg += "📊 *ANALYSIS INCLUDES:*\n"
-            msg += "  ✓ Price Action (350+ candles)\n"
-            msg += "  ✓ Volume Confirmation\n"
-            msg += "  ✓ Swing High/Low Detection\n"
-            msg += "  ✓ Candlestick Patterns\n"
-            msg += "  ✓ Option Chain (PCR, OI, Max Pain)\n"
-            msg += "  ✓ Entry/Target/SL Levels\n"
-            msg += "  ✓ Risk:Reward > 1.5\n\n"
+            msg += "📊 *PATTERNS:*\n"
+            msg += "  ✓ Doji, Hammer, Shooting Star\n"
+            msg += "  ✓ Engulfing patterns\n"
+            msg += "  ✓ Morning/Evening Star\n\n"
+            
+            msg += "🔥 *POWERED BY:*\n"
+            msg += "  • pandas-ta (130+ indicators)\n"
+            msg += "  • finta (80+ indicators)\n"
+            msg += "  • DhanHQ API v2\n\n"
             
             msg += "💡 *FILTERS:*\n"
-            msg += "  • Minimum Confidence: 70%\n"
-            msg += "  • Volume Spike: >1.5x average\n"
-            msg += "  • Clear momentum setup\n\n"
-            
-            msg += "📋 *MONITORING:*\n"
-            msg += "  • 2 Indices (NIFTY, BANKNIFTY)\n"
-            msg += "  • 60 Top Stocks\n\n"
+            msg += "  • Min Confidence: 70%\n"
+            msg += "  • Min R:R: 1.5\n"
+            msg += "  • Multi-indicator confluence\n\n"
             
             msg += "🔔 *Status:* ACTIVE ✅\n"
             msg += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -1066,49 +809,43 @@ class TradingBot:
             
             logger.info("✅ Startup message sent")
         except Exception as e:
-            logger.error(f"Startup message error: {e}")
+            logger.error(f"Startup error: {e}")
     
     async def run(self):
         """Main loop"""
-        logger.info("🚀 Starting Momentum Scanner Bot...")
+        logger.info("🚀 Starting Advanced Bot...")
         
         success = await self.load_security_ids()
         if not success:
-            logger.error("❌ Failed to load security IDs")
+            logger.error("❌ Failed to load IDs")
             return
         
         await self.send_startup_message()
         
-        all_symbols = list(self.security_id_map.keys())
+        symbols = list(self.security_id_map.keys())
         
         while self.running:
             try:
-                timestamp = datetime.now().strftime("%d-%m-%Y %H:%M:%S IST")
-                logger.info(f"\n{'='*70}")
-                logger.info(f"🔄 NEW SCAN CYCLE: {timestamp}")
-                logger.info(f"{'='*70}\n")
+                logger.info(f"\n{'='*60}")
+                logger.info(f"🔄 SCAN: {datetime.now().strftime('%H:%M:%S')}")
+                logger.info(f"{'='*60}\n")
                 
-                for idx, symbol in enumerate(all_symbols, 1):
-                    logger.info(f"📊 [{idx}/{len(all_symbols)}] {symbol}")
-                    
+                for idx, symbol in enumerate(symbols, 1):
+                    logger.info(f"[{idx}/{len(symbols)}] {symbol}")
                     await self.scan_and_alert(symbol)
                     
-                    if idx < len(all_symbols):
+                    if idx < len(symbols):
                         await asyncio.sleep(8)
                 
-                logger.info("\n" + "="*70)
-                logger.info("✅ SCAN CYCLE COMPLETED!")
-                logger.info("⏳ Next scan in 15 minutes...")
-                logger.info("="*70 + "\n")
-                
-                await asyncio.sleep(900)  # 15 minutes
+                logger.info("\n✅ Cycle complete! Next in 15 min...\n")
+                await asyncio.sleep(900)
                 
             except KeyboardInterrupt:
-                logger.info("🛑 Bot stopped")
+                logger.info("🛑 Stopped")
                 self.running = False
                 break
             except Exception as e:
-                logger.error(f"Main loop error: {e}")
+                logger.error(f"Error: {e}")
                 await asyncio.sleep(60)
 
 
@@ -1117,28 +854,27 @@ class TradingBot:
 # ========================
 if __name__ == "__main__":
     try:
-        required_vars = {
+        required = {
             'TELEGRAM_BOT_TOKEN': TELEGRAM_BOT_TOKEN,
             'TELEGRAM_CHAT_ID': TELEGRAM_CHAT_ID,
             'DHAN_CLIENT_ID': DHAN_CLIENT_ID,
             'DHAN_ACCESS_TOKEN': DHAN_ACCESS_TOKEN
         }
         
-        missing = [k for k, v in required_vars.items() if not v]
+        missing = [k for k, v in required.items() if not v]
         
         if missing:
-            logger.error("❌ MISSING ENVIRONMENT VARIABLES!")
-            logger.error(f"Missing: {', '.join(missing)}")
+            logger.error(f"❌ Missing: {', '.join(missing)}")
             exit(1)
         
-        logger.info("✅ All environment variables OK")
-        logger.info("🚀 Starting bot...")
+        logger.info("✅ Environment OK")
+        logger.info("🚀 Launching bot...")
         
         bot = TradingBot()
         asyncio.run(bot.run())
         
     except Exception as e:
-        logger.error(f"💥 FATAL ERROR: {e}")
+        logger.error(f"💥 FATAL: {e}")
         import traceback
         traceback.print_exc()
         exit(1)
