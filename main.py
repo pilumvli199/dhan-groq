@@ -59,27 +59,8 @@ STOCKS_INDICES = {
     "ICICIBANK": {"symbol": "ICICIBANK", "segment": "NSE_EQ"},
     "BAJFINANCE": {"symbol": "BAJFINANCE", "segment": "NSE_EQ"},
     "INFY": {"symbol": "INFY", "segment": "NSE_EQ"},
-    "TATAMOTORS": {"symbol": "TATAMOTORS", "segment": "NSE_EQ"},
-    "AXISBANK": {"symbol": "AXISBANK", "segment": "NSE_EQ"},
-    "SBIN": {"symbol": "SBIN", "segment": "NSE_EQ"},
-    "LTIM": {"symbol": "LTIM", "segment": "NSE_EQ"},
-    "ADANIENT": {"symbol": "ADANIENT", "segment": "NSE_EQ"},
-    "KOTAKBANK": {"symbol": "KOTAKBANK", "segment": "NSE_EQ"},
-    "LT": {"symbol": "LT", "segment": "NSE_EQ"},
-    "MARUTI": {"symbol": "MARUTI", "segment": "NSE_EQ"},
-    "TECHM": {"symbol": "TECHM", "segment": "NSE_EQ"},
-    "LICI": {"symbol": "LICI", "segment": "NSE_EQ"},
-    "HINDUNILVR": {"symbol": "HINDUNILVR", "segment": "NSE_EQ"},
-    "NTPC": {"symbol": "NTPC", "segment": "NSE_EQ"},
-    "BHARTIARTL": {"symbol": "BHARTIARTL", "segment": "NSE_EQ"},
-    "POWERGRID": {"symbol": "POWERGRID", "segment": "NSE_EQ"},
-    "ONGC": {"symbol": "ONGC", "segment": "NSE_EQ"},
-    "PERSISTENT": {"symbol": "PERSISTENT", "segment": "NSE_EQ"},
-    "DRREDDY": {"symbol": "DRREDDY", "segment": "NSE_EQ"},
-    "M&M": {"symbol": "M&M", "segment": "NSE_EQ"},
-    "WIPRO": {"symbol": "WIPRO", "segment": "NSE_EQ"},
-    "DMART": {"symbol": "DMART", "segment": "NSE_EQ"},
-    "TRENT": {"symbol": "TRENT", "segment": "NSE_EQ"},
+    
+    
 }
 
 # ========================
