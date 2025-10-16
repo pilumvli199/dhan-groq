@@ -50,7 +50,6 @@ DHAN_INTRADAY_URL = f"{DHAN_API_BASE}/v2/charts/intraday"
 STOCKS_INDICES = {
     # Indices
     "NIFTY 50": {"symbol": "NIFTY 50", "segment": "IDX_I"},
-    "NIFTY BANK": {"symbol": "NIFTY BANK", "segment": "IDX_I"},
     "SENSEX": {"symbol": "SENSEX", "segment": "IDX_I"},
     
     # Stocks
