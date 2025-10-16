@@ -61,6 +61,94 @@ MARKET_CLOSE = "15:30"
 SCAN_INTERVAL_MINUTES = 5
 
 # ========================
+# DATA COMPRESSION HELPER
+# ========================
+def compress_candles(candles, last_n=30):
+    """Only last N candles + summary statistics"""
+    if not candles or len(candles) == 0:
+        return {"error": "No candles"}
+    
+    recent = candles[-last_n:] if len(candles) > last_n else candles
+    
+    all_highs = [c['high'] for c in candles]
+    all_lows = [c['low'] for c in candles]
+    all_closes = [c['close'] for c in candles]
+    all_volumes = [c['volume'] for c in candles]
+    
+    return {
+        "recent_candles": recent,
+        "total_candles": len(candles),
+        "period_high": max(all_highs),
+        "period_low": min(all_lows),
+        "avg_close": sum(all_closes) / len(all_closes),
+        "total_volume": sum(all_volumes),
+        "first_close": candles[0]['close'],
+        "last_close": candles[-1]['close'],
+        "change_pct": ((candles[-1]['close'] - candles[0]['close']) / candles[0]['close'] * 100) if candles[0]['close'] != 0 else 0
+    }
+
+def compress_option_chain(oc_data, spot_price):
+    """Extract only key option chain metrics"""
+    if not oc_data or not oc_data.get('oc'):
+        return {"error": "No option chain data"}
+    
+    oc = oc_data.get('oc', {})
+    strikes = sorted([float(s) for s in oc.keys()])
+    
+    if not strikes or spot_price == 0:
+        return {"error": "Invalid strikes or spot price"}
+    
+    # ATM strike
+    atm = min(strikes, key=lambda x: abs(x - spot_price))
+    atm_idx = strikes.index(atm)
+    
+    # ATM + 5 OTM strikes each side
+    start = max(0, atm_idx - 5)
+    end = min(len(strikes), atm_idx + 6)
+    key_strikes = strikes[start:end]
+    
+    # Extract key data
+    chain_summary = []
+    total_ce_oi = 0
+    total_pe_oi = 0
+    
+    for strike in key_strikes:
+        strike_key = f"{strike:.6f}"
+        data = oc.get(strike_key, {})
+        
+        ce = data.get('ce', {})
+        pe = data.get('pe', {})
+        
+        ce_oi = ce.get('oi', 0)
+        pe_oi = pe.get('oi', 0)
+        
+        total_ce_oi += ce_oi
+        total_pe_oi += pe_oi
+        
+        chain_summary.append({
+            'strike': strike,
+            'ce_ltp': ce.get('last_price', 0),
+            'ce_oi': ce_oi,
+            'ce_vol': ce.get('volume', 0),
+            'pe_ltp': pe.get('last_price', 0),
+            'pe_oi': pe_oi,
+            'pe_vol': pe.get('volume', 0),
+            'is_atm': strike == atm
+        })
+    
+    pcr = total_pe_oi / total_ce_oi if total_ce_oi > 0 else 0
+    
+    return {
+        "spot_price": spot_price,
+        "atm_strike": atm,
+        "pcr": round(pcr, 2),
+        "total_ce_oi": total_ce_oi,
+        "total_pe_oi": total_pe_oi,
+        "key_strikes": chain_summary
+    }
+
+
+# ========================
 # LAYER 1: GROQ FAST FILTER (FREE)
 # ========================
 class GroqFilter:
@@ -68,37 +156,34 @@ class GroqFilter:
         self.client = Groq(api_key=api_key)
         logger.info("✅ Layer 1: Groq (Llama 3.3) - FREE")
     
-    def quick_filter(self, symbol, candles_json, option_chain_json, spot_price):
-        """Fast filtering using Groq (FREE)"""
+    def quick_filter(self, symbol, candles_summary, oc_summary):
+        """Fast filtering using COMPRESSED data"""
         try:
-            prompt = f"""You are a quick pre-filter for Indian F&O trading.
+            prompt = f"""Quick F&O pre-filter for {symbol}.
 
-SYMBOL: {symbol}
-SPOT PRICE: ₹{spot_price:,.2f}
+CANDLESTICK SUMMARY (Last 30 of {candles_summary.get('total_candles', 0)} candles):
+- Period High/Low: ₹{candles_summary.get('period_high', 0):.2f} / ₹{candles_summary.get('period_low', 0):.2f}
+- First → Last Close: ₹{candles_summary.get('first_close', 0):.2f} → ₹{candles_summary.get('last_close', 0):.2f}
+- Change: {candles_summary.get('change_pct', 0):.2f}%
+- Total Volume: {candles_summary.get('total_volume', 0):,.0f}
 
-CANDLESTICK DATA (Last 100 candles, 5-min):
-{candles_json}
+Recent 30 Candles:
+{json.dumps(candles_summary.get('recent_candles', []), indent=1)}
 
-OPTION CHAIN DATA:
-{option_chain_json}
+OPTION CHAIN:
+- Spot: ₹{oc_summary.get('spot_price', 0):.2f}
+- ATM: ₹{oc_summary.get('atm_strike', 0):.0f}
+- PCR: {oc_summary.get('pcr', 0):.2f}
+- CE OI: {oc_summary.get('total_ce_oi', 0):,.0f} | PE OI: {oc_summary.get('total_pe_oi', 0):,.0f}
 
-YOUR TASK:
-Score this setup 0-10 based on:
-1. Price momentum (last 20 candles)
-2. Volume confirmation
-3. Option chain sentiment
-4. Trend or breakout setup
-5. Risk-reward potential
+Key Strikes:
+{json.dumps(oc_summary.get('key_strikes', []), indent=1)}
 
-OUTPUT (strict format):
+Score 0-10 based on momentum, volume, PCR, setup quality.
+
+OUTPUT:
 SCORE: [0-10]
-REASON: [One line]
-
-Example:
-SCORE: 8
-REASON: Strong bullish with volume
-
-Analyze {symbol}:"""
+REASON: [One line]"""
             
             response = self.client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
@@ -147,60 +232,58 @@ class DeepSeekV3Analyzer:
         )
         logger.info("✅ Layer 2: DeepSeek V3 - $0.004/scan")
     
-    async def detailed_analysis(self, symbol, candles_json, option_chain_json, spot_price, groq_reason):
-        """Detailed analysis with DeepSeek V3"""
+    async def detailed_analysis(self, symbol, candles_summary, oc_summary, groq_reason):
+        """Detailed analysis with COMPRESSED data"""
         try:
-            prompt = f"""You are an expert F&O trader.
+            spot = oc_summary.get('spot_price', 0)
+            
+            prompt = f"""Expert F&O analysis for {symbol}.
 
-SYMBOL: {symbol}
-SPOT: ₹{spot_price:,.2f}
+SPOT: ₹{spot:,.2f}
 TIME: {datetime.now(IST).strftime('%d-%m-%Y %H:%M IST')}
 
-CANDLESTICKS (100 candles, 5-min):
-{candles_json}
+CANDLES ({candles_summary.get('total_candles', 0)} total, showing last 30):
+- Range: ₹{candles_summary.get('period_low', 0):.2f} - ₹{candles_summary.get('period_high', 0):.2f}
+- Movement: {candles_summary.get('change_pct', 0):.2f}%
+- Recent: {json.dumps(candles_summary.get('recent_candles', [])[-10:], indent=1)}
 
 OPTION CHAIN:
-{option_chain_json}
+- ATM: ₹{oc_summary.get('atm_strike', 0):.0f} | PCR: {oc_summary.get('pcr', 0):.2f}
+- Strikes: {json.dumps(oc_summary.get('key_strikes', []), indent=1)}
 
-GROQ PRE-FILTER: {groq_reason}
+GROQ: {groq_reason}
 
-ANALYZE:
-1. Price Action (last 100 candles, trends, levels)
-2. Option Chain (PCR, OI strikes, support/resistance)
-3. Trade Setup (direction, entry, targets, SL)
+Analyze price action, option chain, and provide trade setup.
 
-OUTPUT FORMAT:
+OUTPUT:
 
 🎯 DECISION: [YES/NO/WAIT]
 
 IF YES:
 📊 DIRECTION: [BULLISH/BEARISH]
 Entry: ₹[price]
-Entry Condition: [Trigger]
 T1: ₹[price]
 T2: ₹[price]
-SL: ₹[price] ([X]% risk)
-RISK:REWARD: [X:Y]
+SL: ₹[price] ([X]%)
+R:R: [X:Y]
 CONFIDENCE: [X]%
-KEY REASONS:
-- [Reason 1]
-- [Reason 2]
+REASONS:
+- [Key reason 1]
+- [Key reason 2]
 
-IF NO:
-❌ REASON: [Why not]
-
-Analyze {symbol}:"""
+IF NO/WAIT:
+❌ REASON: [Why]"""
             
             response = self.client.chat.completions.create(
                 model="deepseek-chat",
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.2,
-                max_tokens=1000
+                max_tokens=800
             )
             
             analysis = response.choices[0].message.content
             
-            # Cost calculation (DeepSeek V3)
+            # Cost
             usage = response.usage
             cost_input = (usage.prompt_tokens / 1_000_000) * 0.27
             cost_output = (usage.completion_tokens / 1_000_000) * 1.10
@@ -209,7 +292,7 @@ Analyze {symbol}:"""
             
             logger.info(f"  💎 DeepSeek V3: {symbol} | Cost: ₹{cost_inr:.4f}")
             
-            # Check decision
+            # Decision
             decision = "NO"
             if "DECISION: YES" in analysis.upper():
                 decision = "YES"
@@ -241,43 +324,36 @@ class DeepSeekR1FinalDecision:
     async def final_decision(self, symbol, spot_price, deepseek_v3_analysis):
         """Final decision with DeepSeek R1"""
         try:
-            prompt = f"""Final decision maker for F&O trades.
+            prompt = f"""Final trade decision for {symbol} (Spot: ₹{spot_price:,.2f}).
 
-SYMBOL: {symbol}
-SPOT: ₹{spot_price:,.2f}
-
-DeepSeek V3 Analysis:
+V3 Analysis:
 {deepseek_v3_analysis}
 
-TASK - DEEP REASONING:
-1. Is entry trigger clear?
-2. Is SL safe and structure-based?
-3. Is risk:reward favorable (>1.5)?
-4. Any hidden risks?
-5. Does option chain confirm?
-6. High-probability setup?
-
-Make FINAL DECISION: TRADE or SKIP
+Deep reasoning:
+1. Clear entry trigger?
+2. Safe SL?
+3. R:R > 1.5?
+4. Hidden risks?
+5. OC confirms?
+6. High probability?
 
 OUTPUT:
 
 🧠 REASONING:
 [Step-by-step thinking]
 
-🎯 FINAL DECISION: [TRADE/SKIP]
+🎯 FINAL: [TRADE/SKIP]
 
 IF TRADE:
-✅ SETUP VALIDATED: [Confirm entry, targets, SL]
-⚠️ RISK FACTORS:
+✅ VALIDATED: [Entry, targets, SL]
+⚠️ RISKS:
 - [Risk 1]
 - [Risk 2]
 
 IF SKIP:
-❌ REASON: [Why skip]
+❌ REASON: [Why]
 
-Be conservative. Only TRADE if truly confident.
-
-Analyze {symbol}:"""
+Be conservative."""
             
             response = self.client.chat.completions.create(
                 model="deepseek-reasoner",
@@ -296,9 +372,9 @@ Analyze {symbol}:"""
             
             logger.info(f"  🧠 DeepSeek R1: {symbol} | FREE")
             
-            # Check final decision
+            # Decision
             final_decision = "SKIP"
-            if "FINAL DECISION: TRADE" in decision_text.upper():
+            if "FINAL: TRADE" in decision_text.upper() or "FINAL DECISION: TRADE" in decision_text.upper():
                 final_decision = "TRADE"
             
             return {
@@ -327,7 +403,7 @@ class TradingBot:
         }
         self.security_id_map = {}
         
-        # Initialize AI layers
+        # AI layers
         self.groq = GroqFilter(GROQ_API_KEY)
         self.deepseek_v3 = DeepSeekV3Analyzer(DEEPSEEK_API_KEY)
         self.deepseek_r1 = DeepSeekR1FinalDecision(DEEPSEEK_API_KEY)
@@ -337,11 +413,9 @@ class TradingBot:
         logger.info("🤖 3-Layer AI Bot initialized")
     
     def get_ist_time(self):
-        """Get current time in IST"""
         return datetime.now(IST)
     
     async def load_security_ids(self):
-        """Load security IDs from Dhan"""
         try:
             logger.info("Loading IDs...")
             response = requests.get(DHAN_INSTRUMENTS_URL, timeout=30)
@@ -392,7 +466,6 @@ class TradingBot:
             return False
     
     def get_candles(self, security_id, segment, symbol):
-        """Fetch last 100 candles (5-min)"""
         try:
             if segment == "IDX_I":
                 exch_seg = "IDX_I"
@@ -402,7 +475,7 @@ class TradingBot:
                 instrument = "EQUITY"
             
             to_date = self.get_ist_time()
-            from_date = to_date - timedelta(days=7)  # 7 days to ensure enough data
+            from_date = to_date - timedelta(days=7)
             
             payload = {
                 "securityId": str(security_id),
@@ -434,14 +507,9 @@ class TradingBot:
                             'volume': int(data['volume'][i])
                         })
                     
-                    # Return last 100 candles
                     result = candles[-100:] if len(candles) > 100 else candles
                     logger.info(f"  📊 Fetched {len(result)} candles")
                     return result
-                else:
-                    logger.warning(f"  ⚠️ Empty data received")
-            else:
-                logger.warning(f"  ⚠️ API returned {response.status_code}")
             
             return None
         except Exception as e:
@@ -449,7 +517,6 @@ class TradingBot:
             return None
     
     def get_option_chain(self, security_id, segment):
-        """Get option chain data"""
         try:
             expiry_payload = {
                 "UnderlyingScrip": security_id,
@@ -494,7 +561,6 @@ class TradingBot:
             return None
     
     async def analyze_symbol(self, symbol):
-        """3-Layer AI Pipeline"""
         try:
             if symbol not in self.security_id_map:
                 return
@@ -507,7 +573,7 @@ class TradingBot:
             # Get data
             candles = self.get_candles(info['security_id'], info['segment'], symbol)
             if not candles or len(candles) < 20:
-                logger.warning(f"  ⚠️ Insufficient candles ({len(candles) if candles else 0} found, need 20+)")
+                logger.warning(f"  ⚠️ Insufficient candles ({len(candles) if candles else 0})")
                 return
             
             option_chain = self.get_option_chain(info['security_id'], info['segment'])
@@ -517,16 +583,18 @@ class TradingBot:
             
             spot_price = option_chain.get('last_price', 0)
             
-            # Convert to JSON
-            candles_json = json.dumps(candles, indent=2)
-            oc_json = json.dumps(option_chain, indent=2)
+            if spot_price == 0:
+                logger.warning(f"  ⚠️ Invalid spot price")
+                return
             
-            logger.info(f"  📊 Data: {len(candles)} candles, Spot: ₹{spot_price:,.2f}")
+            # COMPRESS DATA
+            candles_summary = compress_candles(candles, last_n=30)
+            oc_summary = compress_option_chain(option_chain, spot_price)
             
-            # ==================
+            logger.info(f"  📊 Data: {len(candles)} candles → 30, Spot: ₹{spot_price:,.2f}, PCR: {oc_summary.get('pcr', 0)}")
+            
             # LAYER 1: GROQ
-            # ==================
-            groq_result = self.groq.quick_filter(symbol, candles_json, oc_json, spot_price)
+            groq_result = self.groq.quick_filter(symbol, candles_summary, oc_summary)
             
             if not groq_result['passed']:
                 logger.info(f"  ⏭️ Filtered (Score: {groq_result['score']}/10)")
@@ -534,11 +602,9 @@ class TradingBot:
             
             logger.info(f"  ✅ Passed Groq")
             
-            # ==================
             # LAYER 2: DeepSeek V3
-            # ==================
             v3_result = await self.deepseek_v3.detailed_analysis(
-                symbol, candles_json, oc_json, spot_price, groq_result['reason']
+                symbol, candles_summary, oc_summary, groq_result['reason']
             )
             
             if not v3_result or v3_result['decision'] != "YES":
@@ -550,9 +616,7 @@ class TradingBot:
             logger.info(f"  ✅ V3: Trade recommended")
             self.total_cost += v3_result['cost']
             
-            # ==================
             # LAYER 3: DeepSeek R1
-            # ==================
             r1_result = await self.deepseek_r1.final_decision(
                 symbol, spot_price, v3_result['analysis']
             )
@@ -563,14 +627,12 @@ class TradingBot:
             
             logger.info(f"  🎯 R1: TRADE CONFIRMED!")
             
-            # Send alert
             await self.send_trade_alert(symbol, spot_price, v3_result, r1_result)
             
         except Exception as e:
             logger.error(f"Analysis error {symbol}: {e}")
     
     async def send_trade_alert(self, symbol, spot_price, v3_result, r1_result):
-        """Send trade alert to Telegram"""
         try:
             msg = f"🚨 *TRADE READY* 🚨\n"
             msg += f"{'═'*40}\n\n"
@@ -592,7 +654,6 @@ class TradingBot:
             msg += f"{'═'*40}\n"
             msg += f"💰 Cost: ₹{v3_result['cost']:.4f} | Total: ₹{self.total_cost:.2f}"
             
-            # Split if too long
             if len(msg) > 4000:
                 parts = [msg[i:i+4000] for i in range(0, len(msg), 4000)]
                 for idx, part in enumerate(parts, 1):
@@ -614,7 +675,6 @@ class TradingBot:
             logger.error(f"Alert error: {e}")
     
     async def send_startup_message(self):
-        """Send startup message"""
         try:
             msg = "🤖 *3-LAYER AI BOT ACTIVE*\n"
             msg += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -622,15 +682,15 @@ class TradingBot:
             msg += f"⏰ Time: {self.get_ist_time().strftime('%d-%m-%Y %H:%M IST')}\n"
             msg += f"📊 Symbols: 10 (8 stocks + 2 indices)\n"
             msg += f"⏱️  Interval: {SCAN_INTERVAL_MINUTES} minutes\n"
-            msg += f"📈 Candles: 100 (5-min) + Option chain\n\n"
+            msg += f"📈 Data: Last 30 candles (compressed)\n\n"
             
             msg += "🔥 *AI PIPELINE*:\n\n"
-            msg += "🟢 Layer 1: GROQ (Llama 3.3) - FREE\n"
+            msg += "🟢 Layer 1: GROQ (Compressed) - FREE\n"
             msg += "💎 Layer 2: DeepSeek V3 - $0.004/scan\n"
             msg += "🧠 Layer 3: DeepSeek R1 - FREE\n\n"
             
             msg += "🎯 Status: Monitoring...\n"
-            msg += f"📅 Market Hours: {MARKET_OPEN}-{MARKET_CLOSE} IST (Mon-Fri)"
+            msg += f"📅 Market: {MARKET_OPEN}-{MARKET_CLOSE} IST (Mon-Fri)"
             
             await self.bot.send_message(
                 chat_id=TELEGRAM_CHAT_ID,
@@ -642,10 +702,9 @@ class TradingBot:
             logger.error(f"Startup error: {e}")
     
     def is_market_hours(self):
-        """Check if market is open (IST timezone)"""
         now = self.get_ist_time()
         current_time = now.time()
-        is_weekday = now.weekday() < 5  # Mon-Fri
+        is_weekday = now.weekday() < 5
         
         market_open_time = datetime.strptime(MARKET_OPEN, "%H:%M").time()
         market_close_time = datetime.strptime(MARKET_CLOSE, "%H:%M").time()
