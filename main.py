@@ -56,8 +56,7 @@ STOCKS_INDICES = {
     "RELIANCE": {"symbol": "RELIANCE", "segment": "NSE_EQ"},
     "HDFCBANK": {"symbol": "HDFCBANK", "segment": "NSE_EQ"},
     "ICICIBANK": {"symbol": "ICICIBANK", "segment": "NSE_EQ"},
-    "BAJFINANCE": {"symbol": "BAJFINANCE", "segment": "NSE_EQ"},
-    "INFY": {"symbol": "INFY", "segment": "NSE_EQ"},
+   
     
     
 }
