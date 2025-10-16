@@ -1,4 +1,42 @@
-import asyncio
+async def run(self):
+        """Main bot loop"""
+        logger.info("🚀 Starting 3-Layer AI Bot...\n")
+        
+        success = await self.load_security_ids()
+        if not success:
+            logger.error("❌ Failed to load IDs")
+            return
+        
+        # Wait for market to open BEFORE sending startup message
+        first_run = True
+        while not self.is_market_hours():
+            now = self.get_ist_time()
+            if first_run:
+                logger.info(f"\n⏸️  Market not open yet!")
+                logger.info(f"Current: {now.strftime('%H:%M IST')} | Market: {MARKET_OPEN}-{MARKET_CLOSE} IST")
+                logger.info(f"Bot will start automatically when market opens...")
+                logger.info(f"Next check in 10 minutes...\n")
+                first_run = False
+            else:
+                logger.info(f"Still waiting... Current: {now.strftime('%H:%M IST')}")
+            await asyncio.sleep(600)  # 10 minutes
+        
+        # Market is open, send startup message
+        await self.send_startup_message()
+        
+        symbols = list(self.security_id_map.keys())
+        
+        while self.running:
+            try:
+                now = self.get_ist_time()
+                
+                if not self.is_market_hours():
+                    logger.info(f"\n⏸️  Market closed")
+                    logger.info(f"Current: {now.strftime('%H:%M IST')} | Market: {MARKET_OPEN}-{MARKET_CLOSE} IST")
+                    logger.info(f"Bot will resume tomorrow at market open...")
+                    logger.info(f"Next check in 30 minutes...\n")
+                    await asyncio.sleep(1800)
+                    continueimport asyncio
 import os
 from telegram import Bot
 import requests
@@ -589,11 +627,16 @@ class TradingBot:
                 logger.warning(f"  ⚠️ No option chain")
                 return
             
+            # Get spot price from option chain OR candle's last close
             spot_price = option_chain.get('last_price', 0)
             
-            # Check spot price validity
             if spot_price == 0 or spot_price is None:
-                logger.warning(f"  ⚠️ Invalid spot price (Market closed or data unavailable)")
+                # Fallback: Use last candle's close price
+                spot_price = candles[-1]['close']
+                logger.info(f"  💡 Using candle close as spot: ₹{spot_price:.2f}")
+            
+            if spot_price == 0:
+                logger.warning(f"  ⚠️ Invalid spot price (Both OC and candles = 0)")
                 return
             
             # COMPRESS DATA
