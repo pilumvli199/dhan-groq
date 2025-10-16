@@ -285,6 +285,8 @@ class DhanOptionChainBot:
         }
         self.security_id_map = {}
         self.ai_analyzer = AIAnalyzer()
+        self.current_batch_index = 0  # Track current batch
+        self.all_symbols = []  # Store all symbol names
         logger.info("Bot initialized successfully")
     
     async def load_security_ids(self):
