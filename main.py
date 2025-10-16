@@ -1,59 +1,20 @@
-async def run(self):
-        """Main bot loop"""
-        logger.info("🚀 Starting 3-Layer AI Bot...\n")
-        
-        success = await self.load_security_ids()
-        if not success:
-            logger.error("❌ Failed to load IDs")
-            return
-        
-        # Wait for market to open BEFORE sending startup message
-        first_run = True
-        while not self.is_market_hours():
-            now = self.get_ist_time()
-            if first_run:
-                logger.info(f"\n⏸️  Market not open yet!")
-                logger.info(f"Current: {now.strftime('%H:%M IST')} | Market: {MARKET_OPEN}-{MARKET_CLOSE} IST")
-                logger.info(f"Bot will start automatically when market opens...")
-                logger.info(f"Next check in 10 minutes...\n")
-                first_run = False
-            else:
-                logger.info(f"Still waiting... Current: {now.strftime('%H:%M IST')}")
-            await asyncio.sleep(600)  # 10 minutes
-        
-        # Market is open, send startup message
-        await self.send_startup_message()
-        
-        symbols = list(self.security_id_map.keys())
-        
-        while self.running:
-            try:
-                now = self.get_ist_time()
-                
-                if not self.is_market_hours():
-                    logger.info(f"\n⏸️  Market closed")
-                    logger.info(f"Current: {now.strftime('%H:%M IST')} | Market: {MARKET_OPEN}-{MARKET_CLOSE} IST")
-                    logger.info(f"Bot will resume tomorrow at market open...")
-                    logger.info(f"Next check in 30 minutes...\n")
-                    await asyncio.sleep(1800)
-                    continueimport asyncio
+import asyncio
 import os
 from telegram import Bot
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime
 import logging
 import csv
+import io
 import json
-from groq import Groq
-from openai import OpenAI
-from zoneinfo import ZoneInfo
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle
+import mplfinance as mpf
+import pandas as pd
 
-# ========================
-# TIMEZONE FIX - IST (UTC+5:30)
-# ========================
-IST = ZoneInfo('Asia/Kolkata')
-
-# Logging
+# Logging setup
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -67,369 +28,254 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 DHAN_CLIENT_ID = os.getenv("DHAN_CLIENT_ID")
 DHAN_ACCESS_TOKEN = os.getenv("DHAN_ACCESS_TOKEN")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
+# AI API Keys
+CEREBRAS_API_KEY = os.getenv("CEREBRAS_API_KEY")
+HYPERBOLIC_API_KEY = os.getenv("HYPERBOLIC_API_KEY")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 
-# Dhan API
+# AI API URLs
+CEREBRAS_API_URL = "https://api.cerebras.ai/v1/chat/completions"
+HYPERBOLIC_API_URL = "https://api.hyperbolic.xyz/v1/chat/completions"
+DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
+
+# Dhan API URLs
 DHAN_API_BASE = "https://api.dhan.co"
-DHAN_INTRADAY_URL = f"{DHAN_API_BASE}/v2/charts/intraday"
+DHAN_OHLC_URL = f"{DHAN_API_BASE}/v2/marketfeed/ohlc"
 DHAN_OPTION_CHAIN_URL = f"{DHAN_API_BASE}/v2/optionchain"
 DHAN_EXPIRY_LIST_URL = f"{DHAN_API_BASE}/v2/optionchain/expirylist"
 DHAN_INSTRUMENTS_URL = "https://images.dhan.co/api-data/api-scrip-master.csv"
+DHAN_HISTORICAL_URL = f"{DHAN_API_BASE}/v2/charts/historical"
+DHAN_INTRADAY_URL = f"{DHAN_API_BASE}/v2/charts/intraday"
 
-# ========================
-# TOP 8 F&O STOCKS + 2 INDICES
-# ========================
-SYMBOLS = {
+# Stock/Index List - Symbol mapping
+STOCKS_INDICES = {
+    # Indices
     "NIFTY 50": {"symbol": "NIFTY 50", "segment": "IDX_I"},
+    "NIFTY BANK": {"symbol": "NIFTY BANK", "segment": "IDX_I"},
     "SENSEX": {"symbol": "SENSEX", "segment": "IDX_I"},
+    
+    # Stocks
     "RELIANCE": {"symbol": "RELIANCE", "segment": "NSE_EQ"},
-    "TCS": {"symbol": "TCS", "segment": "NSE_EQ"},
     "HDFCBANK": {"symbol": "HDFCBANK", "segment": "NSE_EQ"},
-    "INFY": {"symbol": "INFY", "segment": "NSE_EQ"},
     "ICICIBANK": {"symbol": "ICICIBANK", "segment": "NSE_EQ"},
-    "SBIN": {"symbol": "SBIN", "segment": "NSE_EQ"},
-    "BHARTIARTL": {"symbol": "BHARTIARTL", "segment": "NSE_EQ"},
     "BAJFINANCE": {"symbol": "BAJFINANCE", "segment": "NSE_EQ"},
+    "INFY": {"symbol": "INFY", "segment": "NSE_EQ"},
+    "TATAMOTORS": {"symbol": "TATAMOTORS", "segment": "NSE_EQ"},
+    "AXISBANK": {"symbol": "AXISBANK", "segment": "NSE_EQ"},
+    "SBIN": {"symbol": "SBIN", "segment": "NSE_EQ"},
+    "LTIM": {"symbol": "LTIM", "segment": "NSE_EQ"},
+    "ADANIENT": {"symbol": "ADANIENT", "segment": "NSE_EQ"},
+    "KOTAKBANK": {"symbol": "KOTAKBANK", "segment": "NSE_EQ"},
+    "LT": {"symbol": "LT", "segment": "NSE_EQ"},
+    "MARUTI": {"symbol": "MARUTI", "segment": "NSE_EQ"},
+    "TECHM": {"symbol": "TECHM", "segment": "NSE_EQ"},
+    "LICI": {"symbol": "LICI", "segment": "NSE_EQ"},
+    "HINDUNILVR": {"symbol": "HINDUNILVR", "segment": "NSE_EQ"},
+    "NTPC": {"symbol": "NTPC", "segment": "NSE_EQ"},
+    "BHARTIARTL": {"symbol": "BHARTIARTL", "segment": "NSE_EQ"},
+    "POWERGRID": {"symbol": "POWERGRID", "segment": "NSE_EQ"},
+    "ONGC": {"symbol": "ONGC", "segment": "NSE_EQ"},
+    "PERSISTENT": {"symbol": "PERSISTENT", "segment": "NSE_EQ"},
+    "DRREDDY": {"symbol": "DRREDDY", "segment": "NSE_EQ"},
+    "M&M": {"symbol": "M&M", "segment": "NSE_EQ"},
+    "WIPRO": {"symbol": "WIPRO", "segment": "NSE_EQ"},
+    "DMART": {"symbol": "DMART", "segment": "NSE_EQ"},
+    "TRENT": {"symbol": "TRENT", "segment": "NSE_EQ"},
 }
 
-# Market Hours (IST)
-MARKET_OPEN = "09:15"
-MARKET_CLOSE = "15:30"
-SCAN_INTERVAL_MINUTES = 5
-
 # ========================
-# DATA COMPRESSION HELPER
+# AI HELPER CLASS
 # ========================
-def compress_candles(candles, last_n=30):
-    """Only last N candles + summary statistics"""
-    if not candles or len(candles) == 0:
-        return {"error": "No candles"}
+class AIAnalyzer:
+    """3-Layer AI Analysis System"""
     
-    recent = candles[-last_n:] if len(candles) > last_n else candles
-    
-    all_highs = [c['high'] for c in candles]
-    all_lows = [c['low'] for c in candles]
-    all_closes = [c['close'] for c in candles]
-    all_volumes = [c['volume'] for c in candles]
-    
-    return {
-        "recent_candles": recent,
-        "total_candles": len(candles),
-        "period_high": max(all_highs),
-        "period_low": min(all_lows),
-        "avg_close": sum(all_closes) / len(all_closes),
-        "total_volume": sum(all_volumes),
-        "first_close": candles[0]['close'],
-        "last_close": candles[-1]['close'],
-        "change_pct": ((candles[-1]['close'] - candles[0]['close']) / candles[0]['close'] * 100) if candles[0]['close'] != 0 else 0
-    }
-
-def compress_option_chain(oc_data, spot_price):
-    """Extract only key option chain metrics"""
-    if not oc_data or not oc_data.get('oc'):
-        return {"error": "No option chain data"}
-    
-    oc = oc_data.get('oc', {})
-    strikes = sorted([float(s) for s in oc.keys()])
-    
-    if not strikes or spot_price == 0:
-        return {"error": "Invalid strikes or spot price"}
-    
-    # ATM strike
-    atm = min(strikes, key=lambda x: abs(x - spot_price))
-    atm_idx = strikes.index(atm)
-    
-    # ATM + 5 OTM strikes each side
-    start = max(0, atm_idx - 5)
-    end = min(len(strikes), atm_idx + 6)
-    key_strikes = strikes[start:end]
-    
-    # Extract key data
-    chain_summary = []
-    total_ce_oi = 0
-    total_pe_oi = 0
-    
-    for strike in key_strikes:
-        strike_key = f"{strike:.6f}"
-        data = oc.get(strike_key, {})
-        
-        ce = data.get('ce', {})
-        pe = data.get('pe', {})
-        
-        ce_oi = ce.get('oi', 0)
-        pe_oi = pe.get('oi', 0)
-        
-        total_ce_oi += ce_oi
-        total_pe_oi += pe_oi
-        
-        chain_summary.append({
-            'strike': strike,
-            'ce_ltp': ce.get('last_price', 0),
-            'ce_oi': ce_oi,
-            'ce_vol': ce.get('volume', 0),
-            'pe_ltp': pe.get('last_price', 0),
-            'pe_oi': pe_oi,
-            'pe_vol': pe.get('volume', 0),
-            'is_atm': strike == atm
-        })
-    
-    pcr = total_pe_oi / total_ce_oi if total_ce_oi > 0 else 0
-    
-    return {
-        "spot_price": spot_price,
-        "atm_strike": atm,
-        "pcr": round(pcr, 2),
-        "total_ce_oi": total_ce_oi,
-        "total_pe_oi": total_pe_oi,
-        "key_strikes": chain_summary
-    }
-
-
-# ========================
-# LAYER 1: GROQ FAST FILTER (FREE)
-# ========================
-class GroqFilter:
-    def __init__(self, api_key):
-        self.client = Groq(api_key=api_key)
-        logger.info("✅ Layer 1: Groq (Llama 3.3) - FREE")
-    
-    def quick_filter(self, symbol, candles_summary, oc_summary):
-        """Fast filtering using COMPRESSED data"""
+    @staticmethod
+    async def cerebras_filter(stocks_data):
+        """Layer 1: Cerebras Llama 3.3 70B - Quick Filtering"""
         try:
-            prompt = f"""Quick F&O pre-filter for {symbol}.
-
-CANDLESTICK SUMMARY (Last 30 of {candles_summary.get('total_candles', 0)} candles):
-- Period High/Low: ₹{candles_summary.get('period_high', 0):.2f} / ₹{candles_summary.get('period_low', 0):.2f}
-- First → Last Close: ₹{candles_summary.get('first_close', 0):.2f} → ₹{candles_summary.get('last_close', 0):.2f}
-- Change: {candles_summary.get('change_pct', 0):.2f}%
-- Total Volume: {candles_summary.get('total_volume', 0):,.0f}
-
-Recent 30 Candles:
-{json.dumps(candles_summary.get('recent_candles', []), indent=1)}
-
-OPTION CHAIN:
-- Spot: ₹{oc_summary.get('spot_price', 0):.2f}
-- ATM: ₹{oc_summary.get('atm_strike', 0):.0f}
-- PCR: {oc_summary.get('pcr', 0):.2f}
-- CE OI: {oc_summary.get('total_ce_oi', 0):,.0f} | PE OI: {oc_summary.get('total_pe_oi', 0):,.0f}
-
-Key Strikes:
-{json.dumps(oc_summary.get('key_strikes', []), indent=1)}
-
-Score 0-10 based on momentum, volume, PCR, setup quality.
-
-OUTPUT:
-SCORE: [0-10]
-REASON: [One line]"""
+            # Compact data format for API
+            compact_data = []
+            for stock in stocks_data:
+                compact_data.append({
+                    "sym": stock["symbol"],
+                    "spot": stock["spot_price"],
+                    "candles": stock["candles"][-60:],  # Last 60 only
+                    "oc": {
+                        "ce_oi": stock["option_chain"].get("ce_total_oi", 0),
+                        "pe_oi": stock["option_chain"].get("pe_total_oi", 0),
+                        "pcr": stock["option_chain"].get("pcr", 0),
+                        "atm_ce": stock["option_chain"].get("atm_ce_ltp", 0),
+                        "atm_pe": stock["option_chain"].get("atm_pe_ltp", 0)
+                    }
+                })
             
-            response = self.client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.1,
-                max_tokens=100
-            )
-            
-            result = response.choices[0].message.content
-            
-            # Extract score
-            score = 0
-            reason = "No clear setup"
-            
-            lines = result.strip().split('\n')
-            for line in lines:
-                if 'SCORE:' in line.upper():
-                    try:
-                        score = int(''.join(filter(str.isdigit, line)))
-                    except:
-                        score = 0
-                elif 'REASON:' in line.upper():
-                    reason = line.split(':', 1)[1].strip()
-            
-            logger.info(f"  ⚡ Groq: {symbol} → {score}/10 | {reason}")
-            
-            return {
-                'score': score,
-                'reason': reason,
-                'passed': score >= 6
+            prompt = f"""Analyze these {len(compact_data)} stocks and filter TOP 5 with best trading opportunities.
+
+Data: {json.dumps(compact_data)}
+
+Filter based on:
+1. Price momentum (last 60 candles)
+2. Volume surge
+3. PCR ratio (Put-Call Ratio)
+4. OI changes
+
+Return ONLY JSON array with top 5 symbols: ["SYM1","SYM2","SYM3","SYM4","SYM5"]"""
+
+            headers = {
+                "Authorization": f"Bearer {CEREBRAS_API_KEY}",
+                "Content-Type": "application/json"
             }
+            
+            payload = {
+                "model": "llama-3.3-70b",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.1,
+                "max_tokens": 100
+            }
+            
+            response = requests.post(CEREBRAS_API_URL, json=payload, headers=headers, timeout=30)
+            
+            if response.status_code == 200:
+                result = response.json()
+                content = result["choices"][0]["message"]["content"]
+                
+                # Extract JSON array
+                import re
+                match = re.search(r'\[(.*?)\]', content)
+                if match:
+                    filtered = json.loads(f'[{match.group(1)}]')
+                    logger.info(f"🤖 Cerebras filtered: {filtered}")
+                    return filtered[:5]
+            
+            logger.warning("Cerebras filtering failed, returning first 5")
+            return [s["symbol"] for s in stocks_data[:5]]
             
         except Exception as e:
-            logger.error(f"Groq error: {e}")
-            return {'score': 0, 'reason': 'Error', 'passed': False}
-
-
-# ========================
-# LAYER 2: DEEPSEEK V3 ANALYSIS
-# ========================
-class DeepSeekV3Analyzer:
-    def __init__(self, api_key):
-        self.client = OpenAI(
-            api_key=api_key,
-            base_url="https://api.deepseek.com"
-        )
-        logger.info("✅ Layer 2: DeepSeek V3 - $0.004/scan")
+            logger.error(f"Cerebras error: {e}")
+            return [s["symbol"] for s in stocks_data[:5]]
     
-    async def detailed_analysis(self, symbol, candles_summary, oc_summary, groq_reason):
-        """Detailed analysis with COMPRESSED data"""
+    @staticmethod
+    async def hyperbolic_analysis(filtered_stocks_data):
+        """Layer 2: Hyperbolic DeepSeek V3 - Deep Analysis"""
         try:
-            spot = oc_summary.get('spot_price', 0)
+            analyses = []
             
-            prompt = f"""Expert F&O analysis for {symbol}.
+            for stock in filtered_stocks_data:
+                # Compact format
+                compact = {
+                    "sym": stock["symbol"],
+                    "spot": stock["spot_price"],
+                    "candles": stock["candles"][-30:],  # Last 30 for analysis
+                    "oc": stock["option_chain"]
+                }
+                
+                prompt = f"""Deep technical analysis for {stock['symbol']}:
 
-SPOT: ₹{spot:,.2f}
-TIME: {datetime.now(IST).strftime('%d-%m-%Y %H:%M IST')}
+{json.dumps(compact, indent=2)}
 
-CANDLES ({candles_summary.get('total_candles', 0)} total, showing last 30):
-- Range: ₹{candles_summary.get('period_low', 0):.2f} - ₹{candles_summary.get('period_high', 0):.2f}
-- Movement: {candles_summary.get('change_pct', 0):.2f}%
-- Recent: {json.dumps(candles_summary.get('recent_candles', [])[-10:], indent=1)}
+Analyze:
+1. Support/Resistance levels
+2. Trend direction
+3. Volume analysis
+4. Option chain signals (PCR, OI buildup)
+5. Risk level (1-10)
 
-OPTION CHAIN:
-- ATM: ₹{oc_summary.get('atm_strike', 0):.0f} | PCR: {oc_summary.get('pcr', 0):.2f}
-- Strikes: {json.dumps(oc_summary.get('key_strikes', []), indent=1)}
+Return compact JSON:
+{{"sym":"...","signal":"BUY/SELL/HOLD","conf":0-100,"risk":1-10,"reason":"..."}}"""
 
-GROQ: {groq_reason}
-
-Analyze price action, option chain, and provide trade setup.
-
-OUTPUT:
-
-🎯 DECISION: [YES/NO/WAIT]
-
-IF YES:
-📊 DIRECTION: [BULLISH/BEARISH]
-Entry: ₹[price]
-T1: ₹[price]
-T2: ₹[price]
-SL: ₹[price] ([X]%)
-R:R: [X:Y]
-CONFIDENCE: [X]%
-REASONS:
-- [Key reason 1]
-- [Key reason 2]
-
-IF NO/WAIT:
-❌ REASON: [Why]"""
+                headers = {
+                    "Authorization": f"Bearer {HYPERBOLIC_API_KEY}",
+                    "Content-Type": "application/json"
+                }
+                
+                payload = {
+                    "model": "deepseek-ai/DeepSeek-V3",
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.2,
+                    "max_tokens": 200
+                }
+                
+                response = requests.post(HYPERBOLIC_API_URL, json=payload, headers=headers, timeout=30)
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    content = result["choices"][0]["message"]["content"]
+                    
+                    # Extract JSON
+                    import re
+                    match = re.search(r'\{.*\}', content, re.DOTALL)
+                    if match:
+                        analysis = json.loads(match.group(0))
+                        analyses.append(analysis)
+                        logger.info(f"🧠 Hyperbolic: {analysis}")
+                
+                await asyncio.sleep(2)  # Rate limit
             
-            response = self.client.chat.completions.create(
-                model="deepseek-chat",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.2,
-                max_tokens=800
-            )
-            
-            analysis = response.choices[0].message.content
-            
-            # Cost
-            usage = response.usage
-            cost_input = (usage.prompt_tokens / 1_000_000) * 0.27
-            cost_output = (usage.completion_tokens / 1_000_000) * 1.10
-            cost_usd = cost_input + cost_output
-            cost_inr = cost_usd * 83
-            
-            logger.info(f"  💎 DeepSeek V3: {symbol} | Cost: ₹{cost_inr:.4f}")
-            
-            # Decision
-            decision = "NO"
-            if "DECISION: YES" in analysis.upper():
-                decision = "YES"
-            elif "DECISION: WAIT" in analysis.upper():
-                decision = "WAIT"
-            
-            return {
-                'decision': decision,
-                'analysis': analysis,
-                'cost': cost_inr
-            }
+            return analyses
             
         except Exception as e:
-            logger.error(f"DeepSeek V3 error: {e}")
-            return None
-
-
-# ========================
-# LAYER 3: DEEPSEEK R1 FINAL DECISION
-# ========================
-class DeepSeekR1FinalDecision:
-    def __init__(self, api_key):
-        self.client = OpenAI(
-            api_key=api_key,
-            base_url="https://api.deepseek.com"
-        )
-        logger.info("✅ Layer 3: DeepSeek R1 - FREE")
+            logger.error(f"Hyperbolic error: {e}")
+            return []
     
-    async def final_decision(self, symbol, spot_price, deepseek_v3_analysis):
-        """Final decision with DeepSeek R1"""
+    @staticmethod
+    async def deepseek_r1_decision(hyperbolic_analyses, full_data):
+        """Layer 3: DeepSeek R1 - Final Decision"""
         try:
-            prompt = f"""Final trade decision for {symbol} (Spot: ₹{spot_price:,.2f}).
+            prompt = f"""You are a professional trader. Make FINAL trading decisions.
 
-V3 Analysis:
-{deepseek_v3_analysis}
+Hyperbolic Analysis:
+{json.dumps(hyperbolic_analyses, indent=2)}
 
-Deep reasoning:
-1. Clear entry trigger?
-2. Safe SL?
-3. R:R > 1.5?
-4. Hidden risks?
-5. OC confirms?
-6. High probability?
+Full Market Context:
+{json.dumps(full_data, indent=2)}
 
-OUTPUT:
+For each stock, give:
+1. FINAL ACTION: BUY/SELL/HOLD
+2. Entry Price
+3. Target Price
+4. Stop Loss
+5. Confidence (0-100%)
+6. Brief reasoning (max 50 words)
 
-🧠 REASONING:
-[Step-by-step thinking]
+Return JSON array of decisions."""
 
-🎯 FINAL: [TRADE/SKIP]
-
-IF TRADE:
-✅ VALIDATED: [Entry, targets, SL]
-⚠️ RISKS:
-- [Risk 1]
-- [Risk 2]
-
-IF SKIP:
-❌ REASON: [Why]
-
-Be conservative."""
-            
-            response = self.client.chat.completions.create(
-                model="deepseek-reasoner",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.1,
-                max_tokens=2000
-            )
-            
-            reasoning = ""
-            decision_text = ""
-            
-            message = response.choices[0].message
-            if hasattr(message, 'reasoning_content') and message.reasoning_content:
-                reasoning = message.reasoning_content
-            decision_text = message.content
-            
-            logger.info(f"  🧠 DeepSeek R1: {symbol} | FREE")
-            
-            # Decision
-            final_decision = "SKIP"
-            if "FINAL: TRADE" in decision_text.upper() or "FINAL DECISION: TRADE" in decision_text.upper():
-                final_decision = "TRADE"
-            
-            return {
-                'decision': final_decision,
-                'reasoning': reasoning,
-                'analysis': decision_text
+            headers = {
+                "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+                "Content-Type": "application/json"
             }
+            
+            payload = {
+                "model": "deepseek-reasoner",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.1,
+                "max_tokens": 500
+            }
+            
+            response = requests.post(DEEPSEEK_API_URL, json=payload, headers=headers, timeout=45)
+            
+            if response.status_code == 200:
+                result = response.json()
+                content = result["choices"][0]["message"]["content"]
+                
+                # Extract JSON array
+                import re
+                match = re.search(r'\[.*\]', content, re.DOTALL)
+                if match:
+                    decisions = json.loads(match.group(0))
+                    logger.info(f"🎯 DeepSeek R1 decisions: {len(decisions)}")
+                    return decisions
+            
+            return []
             
         except Exception as e:
             logger.error(f"DeepSeek R1 error: {e}")
-            return None
-
+            return []
 
 # ========================
-# MAIN BOT
+# BOT CODE
 # ========================
-class TradingBot:
+class DhanOptionChainBot:
     def __init__(self):
         self.bot = Bot(token=TELEGRAM_BOT_TOKEN)
         self.running = True
@@ -440,29 +286,20 @@ class TradingBot:
             'Accept': 'application/json'
         }
         self.security_id_map = {}
-        
-        # AI layers
-        self.groq = GroqFilter(GROQ_API_KEY)
-        self.deepseek_v3 = DeepSeekV3Analyzer(DEEPSEEK_API_KEY)
-        self.deepseek_r1 = DeepSeekR1FinalDecision(DEEPSEEK_API_KEY)
-        
-        self.total_cost = 0
-        
-        logger.info("🤖 3-Layer AI Bot initialized")
-    
-    def get_ist_time(self):
-        return datetime.now(IST)
+        self.ai_analyzer = AIAnalyzer()
+        logger.info("Bot initialized successfully")
     
     async def load_security_ids(self):
+        """Dhan मधून security IDs load करतो"""
         try:
-            logger.info("Loading IDs...")
+            logger.info("Loading security IDs from Dhan...")
             response = requests.get(DHAN_INSTRUMENTS_URL, timeout=30)
             
             if response.status_code == 200:
                 csv_data = response.text.split('\n')
+                reader = csv.DictReader(csv_data)
                 
-                for symbol, info in SYMBOLS.items():
-                    reader = csv.DictReader(csv_data)
+                for symbol, info in STOCKS_INDICES.items():
                     segment = info['segment']
                     symbol_name = info['symbol']
                     
@@ -478,7 +315,7 @@ class TradingBot:
                                             'segment': segment,
                                             'trading_symbol': symbol_name
                                         }
-                                        logger.info(f"✅ {symbol}")
+                                        logger.info(f"✅ {symbol}: Security ID = {sec_id}")
                                         break
                             else:
                                 if (row.get('SEM_SEGMENT') == 'E' and 
@@ -491,20 +328,29 @@ class TradingBot:
                                             'segment': segment,
                                             'trading_symbol': symbol_name
                                         }
-                                        logger.info(f"✅ {symbol}")
+                                        logger.info(f"✅ {symbol}: Security ID = {sec_id}")
                                         break
-                        except:
+                        except Exception as e:
                             continue
+                    
+                    csv_data_reset = response.text.split('\n')
+                    reader = csv.DictReader(csv_data_reset)
                 
-                logger.info(f"✅ Loaded {len(self.security_id_map)} symbols\n")
+                logger.info(f"Total {len(self.security_id_map)} securities loaded")
                 return True
-            return False
+            else:
+                logger.error(f"Failed to load instruments: {response.status_code}")
+                return False
+                
         except Exception as e:
-            logger.error(f"Load error: {e}")
+            logger.error(f"Error loading security IDs: {e}")
             return False
     
-    def get_candles(self, security_id, segment, symbol):
+    def get_historical_data(self, security_id, segment, symbol):
+        """Last 60 candles घेतो (compact)"""
         try:
+            from datetime import datetime, timedelta
+            
             if segment == "IDX_I":
                 exch_seg = "IDX_I"
                 instrument = "INDEX"
@@ -512,7 +358,7 @@ class TradingBot:
                 exch_seg = "NSE_EQ"
                 instrument = "EQUITY"
             
-            to_date = self.get_ist_time()
+            to_date = datetime.now()
             from_date = to_date - timedelta(days=7)
             
             payload = {
@@ -534,322 +380,313 @@ class TradingBot:
             if response.status_code == 200:
                 data = response.json()
                 
-                if 'open' in data and len(data['open']) > 0:
+                if 'open' in data and 'high' in data:
+                    opens = data.get('open', [])
+                    highs = data.get('high', [])
+                    lows = data.get('low', [])
+                    closes = data.get('close', [])
+                    volumes = data.get('volume', [])
+                    timestamps = data.get('start_Time', [])
+                    
                     candles = []
-                    for i in range(len(data['open'])):
+                    for i in range(len(opens)):
                         candles.append({
-                            'open': round(data['open'][i], 2),
-                            'high': round(data['high'][i], 2),
-                            'low': round(data['low'][i], 2),
-                            'close': round(data['close'][i], 2),
-                            'volume': int(data['volume'][i])
+                            'timestamp': timestamps[i] if i < len(timestamps) else '',
+                            'open': opens[i],
+                            'high': highs[i],
+                            'low': lows[i],
+                            'close': closes[i],
+                            'volume': volumes[i]
                         })
                     
-                    result = candles[-100:] if len(candles) > 100 else candles
-                    logger.info(f"  📊 Fetched {len(result)} candles")
-                    return result
+                    # Last 60 candles only
+                    return candles[-60:] if len(candles) > 60 else candles
             
             return None
+            
         except Exception as e:
-            logger.error(f"Candles error: {e}")
+            logger.error(f"Error getting historical data for {symbol}: {e}")
             return None
     
-    def get_option_chain(self, security_id, segment):
+    def get_nearest_expiry(self, security_id, segment):
+        """सर्वात जवळचा expiry"""
         try:
-            expiry_payload = {
+            payload = {
                 "UnderlyingScrip": security_id,
                 "UnderlyingSeg": segment
             }
             
-            expiry_response = requests.post(
+            response = requests.post(
                 DHAN_EXPIRY_LIST_URL,
-                json=expiry_payload,
+                json=payload,
                 headers=self.headers,
                 timeout=10
             )
             
-            if expiry_response.status_code != 200:
-                logger.warning(f"Expiry API failed: {expiry_response.status_code}")
-                return None
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('status') == 'success' and data.get('data'):
+                    expiries = data['data']
+                    if expiries:
+                        return expiries[0]
             
-            expiry_data = expiry_response.json()
-            if not expiry_data.get('data'):
-                logger.warning(f"No expiry data: {expiry_data}")
-                return None
+            return None
             
-            expiry = expiry_data['data'][0]
-            
-            oc_payload = {
+        except Exception as e:
+            logger.error(f"Error getting expiry: {e}")
+            return None
+    
+    def get_option_chain(self, security_id, segment, expiry):
+        """Option chain data (compact)"""
+        try:
+            payload = {
                 "UnderlyingScrip": security_id,
                 "UnderlyingSeg": segment,
                 "Expiry": expiry
             }
             
-            oc_response = requests.post(
+            response = requests.post(
                 DHAN_OPTION_CHAIN_URL,
-                json=oc_payload,
+                json=payload,
                 headers=self.headers,
                 timeout=15
             )
             
-            if oc_response.status_code == 200:
-                data = oc_response.json()
-                # Debug: Log spot price
-                spot = data.get('last_price', 0)
-                logger.info(f"  OC: Spot=₹{spot:.2f}, Status={data.get('status', 'unknown')}")
-                return data
-            else:
-                logger.warning(f"OC API failed: {oc_response.status_code}")
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('data'):
+                    return data['data']
             
             return None
+            
         except Exception as e:
-            logger.error(f"Option chain error: {e}")
+            logger.error(f"Error getting option chain: {e}")
             return None
     
-    async def analyze_symbol(self, symbol):
+    def compact_option_chain(self, oc_data):
+        """Option chain को compact format मध्ये convert"""
         try:
-            if symbol not in self.security_id_map:
-                return
+            spot_price = oc_data.get('last_price', 0)
+            oc = oc_data.get('oc', {})
             
-            info = self.security_id_map[symbol]
-            logger.info(f"\n{'─'*50}")
-            logger.info(f"📊 {symbol}")
-            logger.info(f"{'─'*50}")
+            strikes = sorted([float(s) for s in oc.keys()])
+            atm_strike = min(strikes, key=lambda x: abs(x - spot_price))
             
-            # Get data
-            candles = self.get_candles(info['security_id'], info['segment'], symbol)
-            if not candles or len(candles) < 20:
-                logger.warning(f"  ⚠️ Insufficient candles ({len(candles) if candles else 0})")
-                return
+            atm_data = oc.get(f"{atm_strike:.6f}", {})
+            ce = atm_data.get('ce', {})
+            pe = atm_data.get('pe', {})
             
-            option_chain = self.get_option_chain(info['security_id'], info['segment'])
-            if not option_chain:
-                logger.warning(f"  ⚠️ No option chain")
-                return
+            # Calculate totals
+            ce_total_oi = sum(oc.get(f"{s:.6f}", {}).get('ce', {}).get('oi', 0) for s in strikes)
+            pe_total_oi = sum(oc.get(f"{s:.6f}", {}).get('pe', {}).get('oi', 0) for s in strikes)
             
-            # Get spot price from option chain OR candle's last close
-            spot_price = option_chain.get('last_price', 0)
-            
-            if spot_price == 0 or spot_price is None:
-                # Fallback: Use last candle's close price
-                spot_price = candles[-1]['close']
-                logger.info(f"  💡 Using candle close as spot: ₹{spot_price:.2f}")
-            
-            if spot_price == 0:
-                logger.warning(f"  ⚠️ Invalid spot price (Both OC and candles = 0)")
-                return
-            
-            # COMPRESS DATA
-            candles_summary = compress_candles(candles, last_n=30)
-            oc_summary = compress_option_chain(option_chain, spot_price)
-            
-            logger.info(f"  📊 Data: {len(candles)} candles → 30, Spot: ₹{spot_price:,.2f}, PCR: {oc_summary.get('pcr', 0)}")
-            
-            # LAYER 1: GROQ
-            groq_result = self.groq.quick_filter(symbol, candles_summary, oc_summary)
-            
-            if not groq_result['passed']:
-                logger.info(f"  ⏭️ Filtered (Score: {groq_result['score']}/10)")
-                return
-            
-            logger.info(f"  ✅ Passed Groq")
-            
-            # LAYER 2: DeepSeek V3
-            v3_result = await self.deepseek_v3.detailed_analysis(
-                symbol, candles_summary, oc_summary, groq_result['reason']
-            )
-            
-            if not v3_result or v3_result['decision'] != "YES":
-                logger.info(f"  ⏭️ V3: {v3_result['decision'] if v3_result else 'ERROR'}")
-                if v3_result:
-                    self.total_cost += v3_result['cost']
-                return
-            
-            logger.info(f"  ✅ V3: Trade recommended")
-            self.total_cost += v3_result['cost']
-            
-            # LAYER 3: DeepSeek R1
-            r1_result = await self.deepseek_r1.final_decision(
-                symbol, spot_price, v3_result['analysis']
-            )
-            
-            if not r1_result or r1_result['decision'] != "TRADE":
-                logger.info(f"  ⏭️ R1: {r1_result['decision'] if r1_result else 'ERROR'}")
-                return
-            
-            logger.info(f"  🎯 R1: TRADE CONFIRMED!")
-            
-            await self.send_trade_alert(symbol, spot_price, v3_result, r1_result)
+            return {
+                "spot": spot_price,
+                "atm": atm_strike,
+                "atm_ce_ltp": ce.get('last_price', 0),
+                "atm_pe_ltp": pe.get('last_price', 0),
+                "ce_total_oi": ce_total_oi,
+                "pe_total_oi": pe_total_oi,
+                "pcr": pe_total_oi / ce_total_oi if ce_total_oi > 0 else 0,
+                "ce_iv": ce.get('implied_volatility', 0),
+                "pe_iv": pe.get('implied_volatility', 0)
+            }
             
         except Exception as e:
-            logger.error(f"Analysis error {symbol}: {e}")
+            logger.error(f"Error compacting option chain: {e}")
+            return {}
     
-    async def send_trade_alert(self, symbol, spot_price, v3_result, r1_result):
+    async def collect_all_data(self):
+        """सर्व stocks चा data collect करतो"""
+        all_data = []
+        
+        for symbol in self.security_id_map.keys():
+            try:
+                info = self.security_id_map[symbol]
+                security_id = info['security_id']
+                segment = info['segment']
+                
+                expiry = self.get_nearest_expiry(security_id, segment)
+                if not expiry:
+                    continue
+                
+                candles = self.get_historical_data(security_id, segment, symbol)
+                oc_data = self.get_option_chain(security_id, segment, expiry)
+                
+                if candles and oc_data:
+                    compact_oc = self.compact_option_chain(oc_data)
+                    
+                    all_data.append({
+                        "symbol": symbol,
+                        "spot_price": compact_oc.get("spot", 0),
+                        "candles": candles,
+                        "option_chain": compact_oc,
+                        "expiry": expiry
+                    })
+                    
+                    logger.info(f"✅ Collected: {symbol}")
+                
+                await asyncio.sleep(3)  # Dhan rate limit
+                
+            except Exception as e:
+                logger.error(f"Error collecting {symbol}: {e}")
+        
+        return all_data
+    
+    async def ai_scan_and_alert(self):
+        """AI-powered scanning आणि alerts"""
         try:
-            msg = f"🚨 *TRADE READY* 🚨\n"
-            msg += f"{'═'*40}\n\n"
+            logger.info("🤖 Starting AI scanning...")
             
-            msg += f"📊 *{symbol}*\n"
-            msg += f"💰 Spot: ₹{spot_price:,.2f}\n"
-            msg += f"⏰ {self.get_ist_time().strftime('%d-%m-%Y %H:%M IST')}\n\n"
+            # Step 1: सर्व data collect करतो
+            all_data = await self.collect_all_data()
+            logger.info(f"📊 Collected {len(all_data)} stocks data")
             
-            msg += f"{'═'*40}\n"
-            msg += f"💎 *V3 ANALYSIS*\n"
-            msg += f"{'═'*40}\n\n"
-            msg += f"```\n{v3_result['analysis']}\n```\n\n"
+            if len(all_data) < 5:
+                logger.warning("Not enough data for AI analysis")
+                return
             
-            msg += f"{'═'*40}\n"
-            msg += f"🧠 *R1 REASONING*\n"
-            msg += f"{'═'*40}\n\n"
-            msg += f"```\n{r1_result['analysis']}\n```\n\n"
+            # Step 2: Cerebras filtering (Top 5)
+            filtered_symbols = await self.ai_analyzer.cerebras_filter(all_data)
+            filtered_data = [d for d in all_data if d["symbol"] in filtered_symbols]
+            logger.info(f"🔍 Cerebras filtered: {filtered_symbols}")
             
-            msg += f"{'═'*40}\n"
-            msg += f"💰 Cost: ₹{v3_result['cost']:.4f} | Total: ₹{self.total_cost:.2f}"
+            # Step 3: Hyperbolic deep analysis
+            hyperbolic_analyses = await self.ai_analyzer.hyperbolic_analysis(filtered_data)
+            logger.info(f"🧠 Hyperbolic analyzed: {len(hyperbolic_analyses)} stocks")
             
-            if len(msg) > 4000:
-                parts = [msg[i:i+4000] for i in range(0, len(msg), 4000)]
-                for idx, part in enumerate(parts, 1):
-                    await self.bot.send_message(
-                        chat_id=TELEGRAM_CHAT_ID,
-                        text=f"[Part {idx}/{len(parts)}]\n\n{part}",
-                        parse_mode='Markdown'
-                    )
-                    await asyncio.sleep(1)
-            else:
-                await self.bot.send_message(
-                    chat_id=TELEGRAM_CHAT_ID,
-                    text=msg,
-                    parse_mode='Markdown'
-                )
+            # Step 4: DeepSeek R1 final decisions
+            final_decisions = await self.ai_analyzer.deepseek_r1_decision(
+                hyperbolic_analyses,
+                filtered_data
+            )
+            logger.info(f"🎯 DeepSeek R1 decisions: {len(final_decisions)}")
             
-            logger.info(f"  ✅ Alert sent")
+            # Step 5: Send alerts
+            if final_decisions:
+                await self.send_ai_alerts(final_decisions)
+            
         except Exception as e:
-            logger.error(f"Alert error: {e}")
+            logger.error(f"Error in AI scan: {e}")
     
-    async def send_startup_message(self):
+    async def send_ai_alerts(self, decisions):
+        """AI decisions को Telegram पर भेजतो"""
         try:
-            msg = "🤖 *3-LAYER AI BOT ACTIVE*\n"
-            msg += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            msg = "🤖 *AI TRADING ALERTS*\n"
+            msg += f"⏰ {datetime.now().strftime('%d-%m-%Y %H:%M:%S')}\n\n"
             
-            msg += f"⏰ Time: {self.get_ist_time().strftime('%d-%m-%Y %H:%M IST')}\n"
-            msg += f"📊 Symbols: 10 (8 stocks + 2 indices)\n"
-            msg += f"⏱️  Interval: {SCAN_INTERVAL_MINUTES} minutes\n"
-            msg += f"📈 Data: Last 30 candles (compressed)\n\n"
+            for decision in decisions:
+                symbol = decision.get("sym", "")
+                action = decision.get("action", "HOLD")
+                entry = decision.get("entry", 0)
+                target = decision.get("target", 0)
+                sl = decision.get("stop_loss", 0)
+                conf = decision.get("confidence", 0)
+                reason = decision.get("reason", "")
+                
+                # Action emoji
+                emoji = "🟢" if action == "BUY" else "🔴" if action == "SELL" else "🟡"
+                
+                msg += f"{emoji} *{symbol}* - {action}\n"
+                msg += f"💰 Entry: ₹{entry:.2f}\n"
+                msg += f"🎯 Target: ₹{target:.2f}\n"
+                msg += f"🛑 SL: ₹{sl:.2f}\n"
+                msg += f"📊 Confidence: {conf}%\n"
+                msg += f"💡 {reason}\n\n"
             
-            msg += "🔥 *AI PIPELINE*:\n\n"
-            msg += "🟢 Layer 1: GROQ (Compressed) - FREE\n"
-            msg += "💎 Layer 2: DeepSeek V3 - $0.004/scan\n"
-            msg += "🧠 Layer 3: DeepSeek R1 - FREE\n\n"
-            
-            msg += "🎯 Status: Monitoring...\n"
-            msg += f"📅 Market: {MARKET_OPEN}-{MARKET_CLOSE} IST (Mon-Fri)"
+            msg += "━━━━━━━━━━━━━━━━\n"
+            msg += "_Powered by 3-Layer AI System_\n"
+            msg += "🧠 Cerebras → Hyperbolic → DeepSeek R1"
             
             await self.bot.send_message(
                 chat_id=TELEGRAM_CHAT_ID,
                 text=msg,
                 parse_mode='Markdown'
             )
-            logger.info("✅ Startup sent")
+            
+            logger.info("✅ AI alerts sent")
+            
         except Exception as e:
-            logger.error(f"Startup error: {e}")
-    
-    def is_market_hours(self):
-        now = self.get_ist_time()
-        current_time = now.time()
-        is_weekday = now.weekday() < 5
-        
-        market_open_time = datetime.strptime(MARKET_OPEN, "%H:%M").time()
-        market_close_time = datetime.strptime(MARKET_CLOSE, "%H:%M").time()
-        
-        market_open = current_time >= market_open_time
-        market_close = current_time <= market_close_time
-        is_market_hours = is_weekday and market_open and market_close
-        
-        return is_market_hours
+            logger.error(f"Error sending AI alerts: {e}")
     
     async def run(self):
-        """Main bot loop"""
-        logger.info("🚀 Starting 3-Layer AI Bot...\n")
+        """Main loop - हर 1 minute AI scan"""
+        logger.info("🚀 Bot started! Loading security IDs...")
         
         success = await self.load_security_ids()
         if not success:
-            logger.error("❌ Failed to load IDs")
+            logger.error("Failed to load security IDs. Exiting...")
             return
         
         await self.send_startup_message()
         
-        symbols = list(self.security_id_map.keys())
-        
-        # Wait for market to open if starting before market hours
-        while not self.is_market_hours():
-            now = self.get_ist_time()
-            logger.info(f"\n⏸️  Waiting for market to open...")
-            logger.info(f"Current: {now.strftime('%H:%M IST')} | Market: {MARKET_OPEN}-{MARKET_CLOSE} IST")
-            logger.info(f"Next check in 10 minutes...\n")
-            await asyncio.sleep(600)  # 10 minutes
-        
         while self.running:
             try:
-                now = self.get_ist_time()
+                timestamp = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
+                logger.info(f"\n{'='*50}")
+                logger.info(f"🤖 AI Scan Cycle: {timestamp}")
+                logger.info(f"{'='*50}")
                 
-                if not self.is_market_hours():
-                    logger.info(f"\n⏸️  Market closed")
-                    logger.info(f"Current: {now.strftime('%H:%M IST')} | Market: {MARKET_OPEN}-{MARKET_CLOSE} IST")
-                    logger.info(f"Next check in 30 minutes...\n")
-                    await asyncio.sleep(1800)
-                    continue
+                # AI scanning आणि alerts
+                await self.ai_scan_and_alert()
                 
-                logger.info(f"\n{'═'*60}")
-                logger.info(f"🔄 SCAN: {now.strftime('%d-%m-%Y %H:%M:%S IST')}")
-                logger.info(f"{'═'*60}")
+                logger.info("✅ AI scan completed!")
+                logger.info("⏳ Waiting 1 minute for next scan...\n")
                 
-                for symbol in symbols:
-                    await self.analyze_symbol(symbol)
-                    await asyncio.sleep(2)
-                
-                logger.info(f"\n{'═'*60}")
-                logger.info(f"✅ Cycle complete | Total cost: ₹{self.total_cost:.2f}")
-                logger.info(f"⏳ Next scan in {SCAN_INTERVAL_MINUTES} minutes...")
-                logger.info(f"{'═'*60}\n")
-                
-                await asyncio.sleep(SCAN_INTERVAL_MINUTES * 60)
+                # 1 minute wait
+                await asyncio.sleep(60)
                 
             except KeyboardInterrupt:
-                logger.info("🛑 Stopped")
+                logger.info("Bot stopped by user")
                 self.running = False
                 break
             except Exception as e:
-                logger.error(f"Loop error: {e}")
+                logger.error(f"Error in main loop: {e}")
                 await asyncio.sleep(60)
+    
+    async def send_startup_message(self):
+        """Startup message"""
+        try:
+            msg = "🤖 *AI Option Chain Bot Started!*\n\n"
+            msg += f"📊 Tracking {len(self.security_id_map)} stocks/indices\n"
+            msg += "⏱️ AI Scans every 1 minute\n\n"
+            msg += "🧠 *3-Layer AI System:*\n"
+            msg += "1️⃣ Cerebras Llama 3.3 70B - Quick Filter\n"
+            msg += "2️⃣ Hyperbolic DeepSeek V3 - Deep Analysis\n"
+            msg += "3️⃣ DeepSeek R1 - Final Decisions\n\n"
+            msg += "✅ Powered by DhanHQ API v2\n"
+            msg += "🚂 Deployed on Railway.app"
+            
+            await self.bot.send_message(
+                chat_id=TELEGRAM_CHAT_ID,
+                text=msg,
+                parse_mode='Markdown'
+            )
+            logger.info("Startup message sent")
+        except Exception as e:
+            logger.error(f"Error sending startup message: {e}")
 
 
 # ========================
-# MAIN
+# BOT RUN
 # ========================
 if __name__ == "__main__":
     try:
-        required = {
-            'TELEGRAM_BOT_TOKEN': TELEGRAM_BOT_TOKEN,
-            'TELEGRAM_CHAT_ID': TELEGRAM_CHAT_ID,
-            'DHAN_CLIENT_ID': DHAN_CLIENT_ID,
-            'DHAN_ACCESS_TOKEN': DHAN_ACCESS_TOKEN,
-            'GROQ_API_KEY': GROQ_API_KEY,
-            'DEEPSEEK_API_KEY': DEEPSEEK_API_KEY
-        }
+        # Environment variables check
+        required_vars = [
+            TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, 
+            DHAN_CLIENT_ID, DHAN_ACCESS_TOKEN,
+            CEREBRAS_API_KEY, HYPERBOLIC_API_KEY, DEEPSEEK_API_KEY
+        ]
         
-        missing = [k for k, v in required.items() if not v]
-        
-        if missing:
-            logger.error(f"❌ Missing: {', '.join(missing)}")
+        if not all(required_vars):
+            logger.error("❌ Missing environment variables!")
+            logger.error("Required: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, DHAN_CLIENT_ID, DHAN_ACCESS_TOKEN")
+            logger.error("AI Keys: CEREBRAS_API_KEY, HYPERBOLIC_API_KEY, DEEPSEEK_API_KEY")
             exit(1)
         
-        logger.info("✅ All variables OK\n")
-        
-        bot = TradingBot()
+        bot = DhanOptionChainBot()
         asyncio.run(bot.run())
-        
     except Exception as e:
-        logger.error(f"💥 ERROR: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"Fatal error: {e}")
         exit(1)
