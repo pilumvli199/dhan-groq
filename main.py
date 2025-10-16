@@ -465,7 +465,7 @@ class TradingBot:
                 instrument = "EQUITY"
             
             to_date = datetime.now()
-            from_date = to_date - timedelta(days=3)  # 3 days for 100 candles
+            from_date = to_date - timedelta(days=5)  # 5 days for 100 candles
             
             payload = {
                 "securityId": str(security_id),
@@ -486,7 +486,10 @@ class TradingBot:
             if response.status_code == 200:
                 data = response.json()
                 
-                if 'open' in data:
+                # Log response to debug
+                logger.info(f"  API Response keys: {list(data.keys())}")
+                
+                if 'open' in data and len(data['open']) > 0:
                     candles = []
                     for i in range(len(data['open'])):
                         candles.append({
@@ -497,12 +500,20 @@ class TradingBot:
                             'volume': int(data['volume'][i])
                         })
                     
+                    logger.info(f"  📊 Fetched {len(candles)} candles")
+                    
                     # Return last 100
                     return candles[-100:] if len(candles) > 100 else candles
+                else:
+                    logger.warning(f"  ⚠️ No candle data in response")
+            else:
+                logger.error(f"  ❌ API error: {response.status_code}")
             
             return None
         except Exception as e:
             logger.error(f"Candles error: {e}")
+            import traceback
+            traceback.print_exc()
             return None
     
     def get_option_chain(self, security_id, segment):
@@ -735,6 +746,21 @@ class TradingBot:
         
         while self.running:
             try:
+                # Check if market is open (Mon-Fri, 9:15 AM - 3:30 PM IST)
+                now = datetime.now()
+                current_time = now.time()
+                is_weekday = now.weekday() < 5  # Mon-Fri
+                market_open = current_time >= datetime.strptime("09:15", "%H:%M").time()
+                market_close = current_time <= datetime.strptime("15:30", "%H:%M").time()
+                is_market_hours = is_weekday and market_open and market_close
+                
+                if not is_market_hours:
+                    logger.info(f"\n⏸️ Market closed. Next check in 30 minutes...")
+                    logger.info(f"Current time: {now.strftime('%H:%M IST')}")
+                    logger.info(f"Market hours: Mon-Fri 09:15-15:30 IST\n")
+                    await asyncio.sleep(1800)  # 30 minutes
+                    continue
+                
                 logger.info(f"\n{'═'*60}")
                 logger.info(f"🔄 SCAN CYCLE: {datetime.now().strftime('%d-%m-%Y %H:%M:%S')}")
                 logger.info(f"{'═'*60}")
