@@ -8,6 +8,12 @@ import csv
 import json
 from groq import Groq
 from openai import OpenAI
+import pytz
+
+# ========================
+# TIMEZONE FIX - IST (UTC+5:30)
+# ========================
+IST = pytz.timezone('Asia/Kolkata')
 
 # Logging
 logging.basicConfig(
@@ -49,6 +55,10 @@ SYMBOLS = {
     "BAJFINANCE": {"symbol": "BAJFINANCE", "segment": "NSE_EQ"},
 }
 
+# Market Hours (IST)
+MARKET_OPEN = "09:15"
+MARKET_CLOSE = "15:30"
+SCAN_INTERVAL_MINUTES = 5
 
 # ========================
 # LAYER 1: GROQ FAST FILTER (FREE)
@@ -59,10 +69,7 @@ class GroqFilter:
         logger.info("✅ Layer 1: Groq (Llama 3.3) - FREE")
     
     def quick_filter(self, symbol, candles_json, option_chain_json, spot_price):
-        """
-        Fast filtering using Groq (FREE)
-        Returns: score (0-10) and reason
-        """
+        """Fast filtering using Groq (FREE)"""
         try:
             prompt = f"""You are a quick pre-filter for Indian F&O trading.
 
@@ -76,24 +83,22 @@ OPTION CHAIN DATA:
 {option_chain_json}
 
 YOUR TASK:
-Quickly scan and score this setup from 0-10 based on:
+Score this setup 0-10 based on:
 1. Price momentum (last 20 candles)
 2. Volume confirmation
-3. Option chain sentiment (PCR, high OI strikes)
-4. Clear trend or breakout setup
+3. Option chain sentiment
+4. Trend or breakout setup
 5. Risk-reward potential
-
-Only recommend if there's a CLEAR trading opportunity.
 
 OUTPUT (strict format):
 SCORE: [0-10]
-REASON: [One line why score given]
+REASON: [One line]
 
 Example:
 SCORE: 8
-REASON: Strong bullish momentum with volume spike, PCR bullish
+REASON: Strong bullish with volume
 
-Now analyze {symbol}:"""
+Analyze {symbol}:"""
             
             response = self.client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
@@ -132,7 +137,7 @@ Now analyze {symbol}:"""
 
 
 # ========================
-# LAYER 2: DEEPSEEK V3 ANALYSIS ($0.004/scan)
+# LAYER 2: DEEPSEEK V3 ANALYSIS
 # ========================
 class DeepSeekV3Analyzer:
     def __init__(self, api_key):
@@ -143,96 +148,46 @@ class DeepSeekV3Analyzer:
         logger.info("✅ Layer 2: DeepSeek V3 - $0.004/scan")
     
     async def detailed_analysis(self, symbol, candles_json, option_chain_json, spot_price, groq_reason):
-        """
-        Detailed analysis with DeepSeek V3
-        3 stocks → Entry/SL/Target
-        """
+        """Detailed analysis with DeepSeek V3"""
         try:
-            prompt = f"""You are an expert F&O trader analyzing Indian stocks.
+            prompt = f"""You are an expert F&O trader.
 
 SYMBOL: {symbol}
-SPOT PRICE: ₹{spot_price:,.2f}
-TIMESTAMP: {datetime.now().strftime('%d-%m-%Y %H:%M IST')}
+SPOT: ₹{spot_price:,.2f}
+TIME: {datetime.now(IST).strftime('%d-%m-%Y %H:%M IST')}
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-📊 CANDLESTICK DATA (100 candles, 5-min timeframe):
+CANDLESTICKS (100 candles, 5-min):
 {candles_json}
 
-💹 OPTION CHAIN DATA:
+OPTION CHAIN:
 {option_chain_json}
 
-🔍 GROQ PRE-FILTER NOTED:
-{groq_reason}
+GROQ PRE-FILTER: {groq_reason}
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ANALYZE:
+1. Price Action (last 100 candles, trends, levels)
+2. Option Chain (PCR, OI strikes, support/resistance)
+3. Trade Setup (direction, entry, targets, SL)
 
-YOUR TASK - DETAILED ANALYSIS:
-
-Analyze comprehensively:
-
-1. PRICE ACTION:
-   - Last 100 candles trend
-   - Support/resistance levels
-   - Breakout/breakdown potential
-   - Volume profile
-
-2. OPTION CHAIN SIGNALS:
-   - PCR ratio interpretation
-   - High OI strikes (support/resistance)
-   - Max pain analysis
-   - IV trends
-
-3. TRADE SETUP:
-   - Direction (BULLISH/BEARISH)
-   - Entry price with trigger
-   - Target 1 & Target 2
-   - Stop loss (structure-based)
-   - Risk:Reward ratio
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-OUTPUT FORMAT (strictly follow):
+OUTPUT FORMAT:
 
 🎯 DECISION: [YES/NO/WAIT]
 
 IF YES:
-
 📊 DIRECTION: [BULLISH/BEARISH]
-
-💰 TRADE SETUP:
 Entry: ₹[price]
-Entry Condition: [Specific trigger]
-
-🎯 TARGETS:
-T1: ₹[price] ([X]%)
-T2: ₹[price] ([X]%)
-
-🛑 STOP LOSS:
+Entry Condition: [Trigger]
+T1: ₹[price]
+T2: ₹[price]
 SL: ₹[price] ([X]% risk)
-Basis: [Why this level]
-
-📊 RISK:REWARD: [X:Y]
-
-🔥 CONFIDENCE: [X]%
-
-📝 KEY REASONS (3-4 bullet points):
+RISK:REWARD: [X:Y]
+CONFIDENCE: [X]%
+KEY REASONS:
 - [Reason 1]
 - [Reason 2]
-- [Reason 3]
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-IF NO/WAIT:
-❌ REASON: [Why not trading]
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-RULES:
-✅ Only YES if confidence > 70%
-✅ Risk:Reward must be > 1:1.5
-✅ Clear entry trigger required
-✅ Consider option chain confirmation
+IF NO:
+❌ REASON: [Why not]
 
 Analyze {symbol}:"""
             
@@ -245,12 +200,12 @@ Analyze {symbol}:"""
             
             analysis = response.choices[0].message.content
             
-            # Calculate cost (DeepSeek V3 pricing)
+            # Cost calculation (DeepSeek V3)
             usage = response.usage
-            cost_input = (usage.prompt_tokens / 1_000_000) * 0.27  # $0.27 per 1M tokens
-            cost_output = (usage.completion_tokens / 1_000_000) * 1.10  # $1.10 per 1M tokens
+            cost_input = (usage.prompt_tokens / 1_000_000) * 0.27
+            cost_output = (usage.completion_tokens / 1_000_000) * 1.10
             cost_usd = cost_input + cost_output
-            cost_inr = cost_usd * 83  # USD to INR
+            cost_inr = cost_usd * 83
             
             logger.info(f"  💎 DeepSeek V3: {symbol} | Cost: ₹{cost_inr:.4f}")
             
@@ -273,7 +228,7 @@ Analyze {symbol}:"""
 
 
 # ========================
-# LAYER 3: DEEPSEEK R1 FINAL DECISION (FREE)
+# LAYER 3: DEEPSEEK R1 FINAL DECISION
 # ========================
 class DeepSeekR1FinalDecision:
     def __init__(self, api_key):
@@ -281,66 +236,44 @@ class DeepSeekR1FinalDecision:
             api_key=api_key,
             base_url="https://api.deepseek.com"
         )
-        logger.info("✅ Layer 3: DeepSeek R1 - FREE (reasoning model)")
+        logger.info("✅ Layer 3: DeepSeek R1 - FREE")
     
     async def final_decision(self, symbol, spot_price, deepseek_v3_analysis):
-        """
-        Final reasoning and decision with DeepSeek R1
-        2 trades ready
-        """
+        """Final decision with DeepSeek R1"""
         try:
-            prompt = f"""You are the final decision maker for F&O trades.
+            prompt = f"""Final decision maker for F&O trades.
 
 SYMBOL: {symbol}
 SPOT: ₹{spot_price:,.2f}
 
-DeepSeek V3 has provided this analysis:
-
+DeepSeek V3 Analysis:
 {deepseek_v3_analysis}
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+TASK - DEEP REASONING:
+1. Is entry trigger clear?
+2. Is SL safe and structure-based?
+3. Is risk:reward favorable (>1.5)?
+4. Any hidden risks?
+5. Does option chain confirm?
+6. High-probability setup?
 
-YOUR TASK - DEEP REASONING:
+Make FINAL DECISION: TRADE or SKIP
 
-Think step-by-step and validate:
-
-1. Is the entry trigger clear and actionable?
-2. Is the stop loss level safe and structure-based?
-3. Is risk:reward truly favorable (>1.5)?
-4. Are there any hidden risks not mentioned?
-5. Does option chain confirm the direction?
-6. Is this a high-probability setup?
-
-After deep reasoning, make FINAL DECISION:
-- TRADE (if confident and all checks pass)
-- SKIP (if any doubts or unclear setup)
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-OUTPUT FORMAT:
+OUTPUT:
 
 🧠 REASONING:
-[Your step-by-step thinking process - be critical]
+[Step-by-step thinking]
 
 🎯 FINAL DECISION: [TRADE/SKIP]
 
 IF TRADE:
-✅ VALIDATED SETUP:
-[Confirm entry, targets, SL from V3 analysis]
-
+✅ SETUP VALIDATED: [Confirm entry, targets, SL]
 ⚠️ RISK FACTORS:
 - [Risk 1]
 - [Risk 2]
 
-💡 EXECUTION PLAN:
-[Specific steps to execute this trade]
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
 IF SKIP:
-❌ REASON: [Why skipping]
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+❌ REASON: [Why skip]
 
 Be conservative. Only TRADE if truly confident.
 
@@ -353,7 +286,6 @@ Analyze {symbol}:"""
                 max_tokens=2000
             )
             
-            # R1 returns reasoning_content + content
             reasoning = ""
             decision_text = ""
             
@@ -404,7 +336,12 @@ class TradingBot:
         
         logger.info("🤖 3-Layer AI Bot initialized")
     
+    def get_ist_time(self):
+        """Get current time in IST"""
+        return datetime.now(IST)
+    
     async def load_security_ids(self):
+        """Load security IDs from Dhan"""
         try:
             logger.info("Loading IDs...")
             response = requests.get(DHAN_INSTRUMENTS_URL, timeout=30)
@@ -447,7 +384,7 @@ class TradingBot:
                         except:
                             continue
                 
-                logger.info(f"✅ Loaded {len(self.security_id_map)} symbols")
+                logger.info(f"✅ Loaded {len(self.security_id_map)} symbols\n")
                 return True
             return False
         except Exception as e:
@@ -464,8 +401,8 @@ class TradingBot:
                 exch_seg = "NSE_EQ"
                 instrument = "EQUITY"
             
-            to_date = datetime.now()
-            from_date = to_date - timedelta(days=5)  # 5 days for 100 candles
+            to_date = self.get_ist_time()
+            from_date = to_date - timedelta(days=5)
             
             payload = {
                 "securityId": str(security_id),
@@ -486,9 +423,6 @@ class TradingBot:
             if response.status_code == 200:
                 data = response.json()
                 
-                # Log response to debug
-                logger.info(f"  API Response keys: {list(data.keys())}")
-                
                 if 'open' in data and len(data['open']) > 0:
                     candles = []
                     for i in range(len(data['open'])):
@@ -501,25 +435,16 @@ class TradingBot:
                         })
                     
                     logger.info(f"  📊 Fetched {len(candles)} candles")
-                    
-                    # Return last 100
                     return candles[-100:] if len(candles) > 100 else candles
-                else:
-                    logger.warning(f"  ⚠️ No candle data in response")
-            else:
-                logger.error(f"  ❌ API error: {response.status_code}")
             
             return None
         except Exception as e:
             logger.error(f"Candles error: {e}")
-            import traceback
-            traceback.print_exc()
             return None
     
     def get_option_chain(self, security_id, segment):
         """Get option chain data"""
         try:
-            # Get nearest expiry
             expiry_payload = {
                 "UnderlyingScrip": security_id,
                 "UnderlyingSeg": segment
@@ -541,7 +466,6 @@ class TradingBot:
             
             expiry = expiry_data['data'][0]
             
-            # Get option chain
             oc_payload = {
                 "UnderlyingScrip": security_id,
                 "UnderlyingSeg": segment,
@@ -587,88 +511,80 @@ class TradingBot:
             
             spot_price = option_chain.get('last_price', 0)
             
-            # Convert to JSON for AI
+            # Convert to JSON
             candles_json = json.dumps(candles, indent=2)
             oc_json = json.dumps(option_chain, indent=2)
             
             logger.info(f"  📊 Data: {len(candles)} candles, Spot: ₹{spot_price:,.2f}")
             
             # ==================
-            # LAYER 1: GROQ FILTER (FREE)
+            # LAYER 1: GROQ
             # ==================
             groq_result = self.groq.quick_filter(symbol, candles_json, oc_json, spot_price)
             
             if not groq_result['passed']:
-                logger.info(f"  ⏭️ Filtered out by Groq (Score: {groq_result['score']}/10)")
+                logger.info(f"  ⏭️ Filtered (Score: {groq_result['score']}/10)")
                 return
             
-            logger.info(f"  ✅ Passed Groq filter (Score: {groq_result['score']}/10)")
+            logger.info(f"  ✅ Passed Groq")
             
             # ==================
-            # LAYER 2: DEEPSEEK V3 ($0.004)
+            # LAYER 2: DeepSeek V3
             # ==================
             v3_result = await self.deepseek_v3.detailed_analysis(
                 symbol, candles_json, oc_json, spot_price, groq_result['reason']
             )
             
             if not v3_result or v3_result['decision'] != "YES":
-                logger.info(f"  ⏭️ DeepSeek V3 decided: {v3_result['decision'] if v3_result else 'ERROR'}")
+                logger.info(f"  ⏭️ V3: {v3_result['decision'] if v3_result else 'ERROR'}")
                 if v3_result:
                     self.total_cost += v3_result['cost']
                 return
             
-            logger.info(f"  ✅ DeepSeek V3: Trade recommended")
+            logger.info(f"  ✅ V3: Trade recommended")
             self.total_cost += v3_result['cost']
             
             # ==================
-            # LAYER 3: DEEPSEEK R1 (FREE)
+            # LAYER 3: DeepSeek R1
             # ==================
             r1_result = await self.deepseek_r1.final_decision(
                 symbol, spot_price, v3_result['analysis']
             )
             
             if not r1_result or r1_result['decision'] != "TRADE":
-                logger.info(f"  ⏭️ DeepSeek R1 final: {r1_result['decision'] if r1_result else 'ERROR'}")
+                logger.info(f"  ⏭️ R1: {r1_result['decision'] if r1_result else 'ERROR'}")
                 return
             
-            logger.info(f"  🎯 DeepSeek R1: TRADE CONFIRMED!")
+            logger.info(f"  🎯 R1: TRADE CONFIRMED!")
             
-            # Send to Telegram
+            # Send alert
             await self.send_trade_alert(symbol, spot_price, v3_result, r1_result)
             
         except Exception as e:
             logger.error(f"Analysis error {symbol}: {e}")
     
     async def send_trade_alert(self, symbol, spot_price, v3_result, r1_result):
-        """Send final trade alert"""
+        """Send trade alert to Telegram"""
         try:
             msg = f"🚨 *TRADE READY* 🚨\n"
             msg += f"{'═'*40}\n\n"
             
             msg += f"📊 *{symbol}*\n"
             msg += f"💰 Spot: ₹{spot_price:,.2f}\n"
-            msg += f"⏰ {datetime.now().strftime('%d-%m-%Y %H:%M IST')}\n\n"
+            msg += f"⏰ {self.get_ist_time().strftime('%d-%m-%Y %H:%M IST')}\n\n"
             
             msg += f"{'═'*40}\n"
-            msg += f"💎 *DEEPSEEK V3 ANALYSIS*\n"
+            msg += f"💎 *V3 ANALYSIS*\n"
             msg += f"{'═'*40}\n\n"
             msg += f"```\n{v3_result['analysis']}\n```\n\n"
             
             msg += f"{'═'*40}\n"
-            msg += f"🧠 *DEEPSEEK R1 REASONING*\n"
+            msg += f"🧠 *R1 REASONING*\n"
             msg += f"{'═'*40}\n\n"
-            
-            if r1_result['reasoning']:
-                msg += f"*Reasoning Process:*\n```\n{r1_result['reasoning'][:500]}...\n```\n\n"
-            
-            msg += f"*Final Decision:*\n```\n{r1_result['analysis']}\n```\n\n"
+            msg += f"```\n{r1_result['analysis']}\n```\n\n"
             
             msg += f"{'═'*40}\n"
-            msg += f"💰 *COST*\n"
-            msg += f"{'═'*40}\n"
-            msg += f"This scan: ₹{v3_result['cost']:.4f}\n"
-            msg += f"Total today: ₹{self.total_cost:.2f}\n"
-            msg += f"{'═'*40}"
+            msg += f"💰 Cost: ₹{v3_result['cost']:.4f} | Total: ₹{self.total_cost:.2f}"
             
             # Split if too long
             if len(msg) > 4000:
@@ -687,41 +603,27 @@ class TradingBot:
                     parse_mode='Markdown'
                 )
             
-            logger.info(f"  ✅ Alert sent: {symbol}")
-            
+            logger.info(f"  ✅ Alert sent")
         except Exception as e:
             logger.error(f"Alert error: {e}")
     
     async def send_startup_message(self):
+        """Send startup message"""
         try:
             msg = "🤖 *3-LAYER AI BOT ACTIVE*\n"
             msg += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
             
-            msg += "🎯 *SYMBOLS:* 10 (8 stocks + 2 indices)\n"
-            msg += "⏱️ *Interval:* 15 minutes\n"
-            msg += "📊 *Data:* 100 candles + Option chain\n\n"
+            msg += f"⏰ Time: {self.get_ist_time().strftime('%d-%m-%Y %H:%M IST')}\n"
+            msg += f"📊 Symbols: 10 (8 stocks + 2 indices)\n"
+            msg += f"⏱️  Interval: {SCAN_INTERVAL_MINUTES} minutes\n"
+            msg += f"📈 Candles: 100 (5-min) + Option chain\n\n"
             
-            msg += "🔥 *AI PIPELINE:*\n\n"
+            msg += "🔥 *AI PIPELINE*:\n\n"
+            msg += "🟢 Layer 1: GROQ (Llama 3.3) - FREE\n"
+            msg += "💎 Layer 2: DeepSeek V3 - $0.004/scan\n"
+            msg += "🧠 Layer 3: DeepSeek R1 - FREE\n\n"
             
-            msg += "🟢 *Layer 1: GROQ (Llama 3.3)*\n"
-            msg += "  • Fast filtering\n"
-            msg += "  • 10 stocks → 3 stocks\n"
-            msg += "  • Cost: FREE\n\n"
-            
-            msg += "💎 *Layer 2: DeepSeek V3*\n"
-            msg += "  • Detailed analysis\n"
-            msg += "  • 3 stocks → Entry/SL/Target\n"
-            msg += "  • Cost: $0.004/scan\n\n"
-            
-            msg += "🧠 *Layer 3: DeepSeek R1*\n"
-            msg += "  • Deep reasoning\n"
-            msg += "  • Final decision\n"
-            msg += "  • 2 trades ready\n"
-            msg += "  • Cost: FREE\n\n"
-            
-            msg += "📊 *Result:* 2 ready-to-trade signals ✅\n\n"
-            
-            msg += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            msg += "🎯 Result: 2 ready-to-trade signals ✅"
             
             await self.bot.send_message(
                 chat_id=TELEGRAM_CHAT_ID,
@@ -732,8 +634,24 @@ class TradingBot:
         except Exception as e:
             logger.error(f"Startup error: {e}")
     
+    def is_market_hours(self):
+        """Check if market is open (IST timezone)"""
+        now = self.get_ist_time()
+        current_time = now.time()
+        is_weekday = now.weekday() < 5  # Mon-Fri
+        
+        market_open_time = datetime.strptime(MARKET_OPEN, "%H:%M").time()
+        market_close_time = datetime.strptime(MARKET_CLOSE, "%H:%M").time()
+        
+        market_open = current_time >= market_open_time
+        market_close = current_time <= market_close_time
+        is_market_hours = is_weekday and market_open and market_close
+        
+        return is_market_hours
+    
     async def run(self):
-        logger.info("🚀 Starting 3-Layer AI Bot...")
+        """Main bot loop"""
+        logger.info("🚀 Starting 3-Layer AI Bot...\n")
         
         success = await self.load_security_ids()
         if not success:
@@ -746,43 +664,36 @@ class TradingBot:
         
         while self.running:
             try:
-                # Check if market is open (Mon-Fri, 9:15 AM - 3:30 PM IST)
-                now = datetime.now()
-                current_time = now.time()
-                is_weekday = now.weekday() < 5  # Mon-Fri
-                market_open = current_time >= datetime.strptime("09:15", "%H:%M").time()
-                market_close = current_time <= datetime.strptime("15:30", "%H:%M").time()
-                is_market_hours = is_weekday and market_open and market_close
+                now = self.get_ist_time()
                 
-                if not is_market_hours:
-                    logger.info(f"\n⏸️ Market closed. Next check in 30 minutes...")
-                    logger.info(f"Current time: {now.strftime('%H:%M IST')}")
-                    logger.info(f"Market hours: Mon-Fri 09:15-15:30 IST\n")
-                    await asyncio.sleep(1800)  # 30 minutes
+                if not self.is_market_hours():
+                    logger.info(f"\n⏸️  Market closed")
+                    logger.info(f"Current: {now.strftime('%H:%M IST')} | Market: {MARKET_OPEN}-{MARKET_CLOSE} IST")
+                    logger.info(f"Next check in 30 minutes...\n")
+                    await asyncio.sleep(1800)
                     continue
                 
                 logger.info(f"\n{'═'*60}")
-                logger.info(f"🔄 SCAN CYCLE: {datetime.now().strftime('%d-%m-%Y %H:%M:%S')}")
+                logger.info(f"🔄 SCAN: {now.strftime('%d-%m-%Y %H:%M:%S IST')}")
                 logger.info(f"{'═'*60}")
                 
                 for symbol in symbols:
                     await self.analyze_symbol(symbol)
-                    await asyncio.sleep(5)  # Small delay between symbols
+                    await asyncio.sleep(2)
                 
                 logger.info(f"\n{'═'*60}")
-                logger.info(f"✅ CYCLE COMPLETE")
-                logger.info(f"💰 Total cost this session: ₹{self.total_cost:.2f}")
-                logger.info(f"⏳ Next scan in 15 minutes...")
+                logger.info(f"✅ Cycle complete | Total cost: ₹{self.total_cost:.2f}")
+                logger.info(f"⏳ Next scan in {SCAN_INTERVAL_MINUTES} minutes...")
                 logger.info(f"{'═'*60}\n")
                 
-                await asyncio.sleep(900)  # 15 minutes
+                await asyncio.sleep(SCAN_INTERVAL_MINUTES * 60)
                 
             except KeyboardInterrupt:
-                logger.info("🛑 Stopped by user")
+                logger.info("🛑 Stopped")
                 self.running = False
                 break
             except Exception as e:
-                logger.error(f"Main loop error: {e}")
+                logger.error(f"Loop error: {e}")
                 await asyncio.sleep(60)
 
 
@@ -803,17 +714,16 @@ if __name__ == "__main__":
         missing = [k for k, v in required.items() if not v]
         
         if missing:
-            logger.error(f"❌ Missing variables: {', '.join(missing)}")
+            logger.error(f"❌ Missing: {', '.join(missing)}")
             exit(1)
         
-        logger.info("✅ All environment variables OK")
-        logger.info("🚀 Launching 3-Layer AI Bot...")
+        logger.info("✅ All variables OK\n")
         
         bot = TradingBot()
         asyncio.run(bot.run())
         
     except Exception as e:
-        logger.error(f"💥 FATAL ERROR: {e}")
+        logger.error(f"💥 ERROR: {e}")
         import traceback
         traceback.print_exc()
         exit(1)
