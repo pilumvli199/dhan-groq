@@ -8,12 +8,12 @@ import csv
 import json
 from groq import Groq
 from openai import OpenAI
-from zoneinfo import ZoneInfo  # ← Changed from pytz
+from zoneinfo import ZoneInfo
 
 # ========================
 # TIMEZONE FIX - IST (UTC+5:30)
 # ========================
-IST = ZoneInfo('Asia/Kolkata')  # ← Changed from pytz.timezone
+IST = ZoneInfo('Asia/Kolkata')
 
 # Logging
 logging.basicConfig(
@@ -402,7 +402,7 @@ class TradingBot:
                 instrument = "EQUITY"
             
             to_date = self.get_ist_time()
-            from_date = to_date - timedelta(days=5)
+            from_date = to_date - timedelta(days=7)  # 7 days to ensure enough data
             
             payload = {
                 "securityId": str(security_id),
@@ -434,8 +434,14 @@ class TradingBot:
                             'volume': int(data['volume'][i])
                         })
                     
-                    logger.info(f"  📊 Fetched {len(candles)} candles")
-                    return candles[-100:] if len(candles) > 100 else candles
+                    # Return last 100 candles
+                    result = candles[-100:] if len(candles) > 100 else candles
+                    logger.info(f"  📊 Fetched {len(result)} candles")
+                    return result
+                else:
+                    logger.warning(f"  ⚠️ Empty data received")
+            else:
+                logger.warning(f"  ⚠️ API returned {response.status_code}")
             
             return None
         except Exception as e:
@@ -501,7 +507,7 @@ class TradingBot:
             # Get data
             candles = self.get_candles(info['security_id'], info['segment'], symbol)
             if not candles or len(candles) < 20:
-                logger.warning(f"  ⚠️ Insufficient candles")
+                logger.warning(f"  ⚠️ Insufficient candles ({len(candles) if candles else 0} found, need 20+)")
                 return
             
             option_chain = self.get_option_chain(info['security_id'], info['segment'])
@@ -623,7 +629,8 @@ class TradingBot:
             msg += "💎 Layer 2: DeepSeek V3 - $0.004/scan\n"
             msg += "🧠 Layer 3: DeepSeek R1 - FREE\n\n"
             
-            msg += "🎯 Result: 2 ready-to-trade signals ✅"
+            msg += "🎯 Status: Monitoring...\n"
+            msg += f"📅 Market Hours: {MARKET_OPEN}-{MARKET_CLOSE} IST (Mon-Fri)"
             
             await self.bot.send_message(
                 chat_id=TELEGRAM_CHAT_ID,
