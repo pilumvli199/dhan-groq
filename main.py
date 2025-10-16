@@ -531,10 +531,12 @@ class TradingBot:
             )
             
             if expiry_response.status_code != 200:
+                logger.warning(f"Expiry API failed: {expiry_response.status_code}")
                 return None
             
             expiry_data = expiry_response.json()
             if not expiry_data.get('data'):
+                logger.warning(f"No expiry data: {expiry_data}")
                 return None
             
             expiry = expiry_data['data'][0]
@@ -553,7 +555,13 @@ class TradingBot:
             )
             
             if oc_response.status_code == 200:
-                return oc_response.json()
+                data = oc_response.json()
+                # Debug: Log spot price
+                spot = data.get('last_price', 0)
+                logger.info(f"  OC: Spot=₹{spot:.2f}, Status={data.get('status', 'unknown')}")
+                return data
+            else:
+                logger.warning(f"OC API failed: {oc_response.status_code}")
             
             return None
         except Exception as e:
@@ -583,8 +591,9 @@ class TradingBot:
             
             spot_price = option_chain.get('last_price', 0)
             
-            if spot_price == 0:
-                logger.warning(f"  ⚠️ Invalid spot price")
+            # Check spot price validity
+            if spot_price == 0 or spot_price is None:
+                logger.warning(f"  ⚠️ Invalid spot price (Market closed or data unavailable)")
                 return
             
             # COMPRESS DATA
@@ -727,6 +736,14 @@ class TradingBot:
         await self.send_startup_message()
         
         symbols = list(self.security_id_map.keys())
+        
+        # Wait for market to open if starting before market hours
+        while not self.is_market_hours():
+            now = self.get_ist_time()
+            logger.info(f"\n⏸️  Waiting for market to open...")
+            logger.info(f"Current: {now.strftime('%H:%M IST')} | Market: {MARKET_OPEN}-{MARKET_CLOSE} IST")
+            logger.info(f"Next check in 10 minutes...\n")
+            await asyncio.sleep(600)  # 10 minutes
         
         while self.running:
             try:
