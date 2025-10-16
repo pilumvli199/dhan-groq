@@ -50,15 +50,36 @@ DHAN_INTRADAY_URL = f"{DHAN_API_BASE}/v2/charts/intraday"
 STOCKS_INDICES = {
     # Indices
     "NIFTY 50": {"symbol": "NIFTY 50", "segment": "IDX_I"},
+    "NIFTY BANK": {"symbol": "NIFTY BANK", "segment": "IDX_I"},
     "SENSEX": {"symbol": "SENSEX", "segment": "IDX_I"},
     
     # Stocks
     "RELIANCE": {"symbol": "RELIANCE", "segment": "NSE_EQ"},
     "HDFCBANK": {"symbol": "HDFCBANK", "segment": "NSE_EQ"},
     "ICICIBANK": {"symbol": "ICICIBANK", "segment": "NSE_EQ"},
-   
-    
-    
+    "BAJFINANCE": {"symbol": "BAJFINANCE", "segment": "NSE_EQ"},
+    "INFY": {"symbol": "INFY", "segment": "NSE_EQ"},
+    "TATAMOTORS": {"symbol": "TATAMOTORS", "segment": "NSE_EQ"},
+    "AXISBANK": {"symbol": "AXISBANK", "segment": "NSE_EQ"},
+    "SBIN": {"symbol": "SBIN", "segment": "NSE_EQ"},
+    "LTIM": {"symbol": "LTIM", "segment": "NSE_EQ"},
+    "ADANIENT": {"symbol": "ADANIENT", "segment": "NSE_EQ"},
+    "KOTAKBANK": {"symbol": "KOTAKBANK", "segment": "NSE_EQ"},
+    "LT": {"symbol": "LT", "segment": "NSE_EQ"},
+    "MARUTI": {"symbol": "MARUTI", "segment": "NSE_EQ"},
+    "TECHM": {"symbol": "TECHM", "segment": "NSE_EQ"},
+    "LICI": {"symbol": "LICI", "segment": "NSE_EQ"},
+    "HINDUNILVR": {"symbol": "HINDUNILVR", "segment": "NSE_EQ"},
+    "NTPC": {"symbol": "NTPC", "segment": "NSE_EQ"},
+    "BHARTIARTL": {"symbol": "BHARTIARTL", "segment": "NSE_EQ"},
+    "POWERGRID": {"symbol": "POWERGRID", "segment": "NSE_EQ"},
+    "ONGC": {"symbol": "ONGC", "segment": "NSE_EQ"},
+    "PERSISTENT": {"symbol": "PERSISTENT", "segment": "NSE_EQ"},
+    "DRREDDY": {"symbol": "DRREDDY", "segment": "NSE_EQ"},
+    "M&M": {"symbol": "M&M", "segment": "NSE_EQ"},
+    "WIPRO": {"symbol": "WIPRO", "segment": "NSE_EQ"},
+    "DMART": {"symbol": "DMART", "segment": "NSE_EQ"},
+    "TRENT": {"symbol": "TRENT", "segment": "NSE_EQ"},
 }
 
 # ========================
@@ -139,15 +160,16 @@ Return ONLY JSON array with top 5 symbols: ["SYM1","SYM2","SYM3","SYM4","SYM5"]"
             analyses = []
             
             for stock in filtered_stocks_data:
-                # Compact format
-                compact = {
-                    "sym": stock["symbol"],
-                    "spot": stock["spot_price"],
-                    "candles": stock["candles"][-30:],  # Last 30 for analysis
-                    "oc": stock["option_chain"]
-                }
-                
-                prompt = f"""Deep technical analysis for {stock['symbol']}:
+                try:
+                    # Compact format
+                    compact = {
+                        "sym": stock["symbol"],
+                        "spot": stock["spot_price"],
+                        "candles": stock["candles"][-30:],  # Last 30 for analysis
+                        "oc": stock["option_chain"]
+                    }
+                    
+                    prompt = f"""Deep technical analysis for {stock['symbol']}:
 
 {json.dumps(compact, indent=2)}
 
@@ -161,38 +183,53 @@ Analyze:
 Return compact JSON:
 {{"sym":"...","signal":"BUY/SELL/HOLD","conf":0-100,"risk":1-10,"reason":"..."}}"""
 
-                headers = {
-                    "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-                    "Content-Type": "application/json"
-                }
-                
-                payload = {
-                    "model": "deepseek-chat",  # DeepSeek V3 model
-                    "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.2,
-                    "max_tokens": 200
-                }
-                
-                response = requests.post(DEEPSEEK_API_URL, json=payload, headers=headers, timeout=30)
-                
-                if response.status_code == 200:
-                    result = response.json()
-                    content = result["choices"][0]["message"]["content"]
+                    headers = {
+                        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+                        "Content-Type": "application/json"
+                    }
                     
-                    # Extract JSON
-                    import re
-                    match = re.search(r'\{.*\}', content, re.DOTALL)
-                    if match:
-                        analysis = json.loads(match.group(0))
-                        analyses.append(analysis)
-                        logger.info(f"🧠 DeepSeek V3: {analysis}")
-                
-                await asyncio.sleep(2)  # Rate limit
+                    payload = {
+                        "model": "deepseek-chat",  # DeepSeek V3 model
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": 0.2,
+                        "max_tokens": 200
+                    }
+                    
+                    logger.info(f"🔄 Calling DeepSeek V3 for {stock['symbol']}...")
+                    response = requests.post(DEEPSEEK_API_URL, json=payload, headers=headers, timeout=30)
+                    
+                    logger.info(f"📡 DeepSeek V3 Response: Status={response.status_code}")
+                    
+                    if response.status_code == 200:
+                        result = response.json()
+                        content = result["choices"][0]["message"]["content"]
+                        
+                        logger.info(f"📄 DeepSeek V3 Raw Response: {content[:200]}...")
+                        
+                        # Extract JSON
+                        import re
+                        match = re.search(r'\{.*\}', content, re.DOTALL)
+                        if match:
+                            analysis = json.loads(match.group(0))
+                            analyses.append(analysis)
+                            logger.info(f"✅ DeepSeek V3 Analysis: {analysis}")
+                        else:
+                            logger.warning(f"⚠️ No JSON found in response for {stock['symbol']}")
+                    else:
+                        logger.error(f"❌ DeepSeek V3 API Error: {response.status_code} - {response.text[:200]}")
+                    
+                    await asyncio.sleep(2)  # Rate limit
+                    
+                except Exception as stock_error:
+                    logger.error(f"Error analyzing {stock['symbol']}: {stock_error}")
+                    continue
             
             return analyses
             
         except Exception as e:
             logger.error(f"DeepSeek V3 error: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return []
     
     @staticmethod
@@ -475,12 +512,15 @@ class DhanOptionChainBot:
             logger.error(f"Error compacting option chain: {e}")
             return {}
     
-    async def collect_all_data(self):
-        """सर्व stocks चा data collect करतो"""
-        all_data = []
+    async def collect_batch_data(self, symbols_batch):
+        """फक्त एका batch चे 5 stocks चा data collect करतो"""
+        batch_data = []
         
-        for symbol in self.security_id_map.keys():
+        for symbol in symbols_batch:
             try:
+                if symbol not in self.security_id_map:
+                    continue
+                
                 info = self.security_id_map[symbol]
                 security_id = info['security_id']
                 segment = info['segment']
@@ -495,7 +535,7 @@ class DhanOptionChainBot:
                 if candles and oc_data:
                     compact_oc = self.compact_option_chain(oc_data)
                     
-                    all_data.append({
+                    batch_data.append({
                         "symbol": symbol,
                         "spot_price": compact_oc.get("spot", 0),
                         "candles": candles,
@@ -505,48 +545,69 @@ class DhanOptionChainBot:
                     
                     logger.info(f"✅ Collected: {symbol}")
                 
-                await asyncio.sleep(3)  # Dhan rate limit
+                await asyncio.sleep(2)  # Dhan rate limit - reduced to 2 sec
                 
             except Exception as e:
                 logger.error(f"Error collecting {symbol}: {e}")
         
-        return all_data
+        return batch_data
     
     async def ai_scan_and_alert(self):
-        """AI-powered scanning आणि alerts"""
+        """AI-powered scanning - फक्त 1 batch process करतो"""
         try:
-            logger.info("🤖 Starting AI scanning...")
+            # Current batch निवडतो (rotating batches)
+            batch_size = 5
+            total_symbols = len(self.all_symbols)
             
-            # Step 1: सर्व data collect करतो
-            all_data = await self.collect_all_data()
-            logger.info(f"📊 Collected {len(all_data)} stocks data")
+            # Calculate batch range
+            start_idx = self.current_batch_index
+            end_idx = min(start_idx + batch_size, total_symbols)
+            current_batch = self.all_symbols[start_idx:end_idx]
             
-            if len(all_data) < 5:
-                logger.warning("Not enough data for AI analysis")
+            logger.info(f"🎯 Batch {self.current_batch_index//batch_size + 1}: {current_batch}")
+            logger.info(f"🤖 Starting AI scanning for this batch...")
+            
+            # Step 1: फक्त या batch चा data collect करतो
+            batch_data = await self.collect_batch_data(current_batch)
+            logger.info(f"📊 Collected {len(batch_data)} stocks data")
+            
+            if len(batch_data) == 0:
+                logger.warning("❌ No data collected for this batch")
+                # Move to next batch
+                self.current_batch_index = (self.current_batch_index + batch_size) % total_symbols
                 return
             
-            # Step 2: Cerebras filtering (Top 5)
-            filtered_symbols = await self.ai_analyzer.cerebras_filter(all_data)
-            filtered_data = [d for d in all_data if d["symbol"] in filtered_symbols]
-            logger.info(f"🔍 Cerebras filtered: {filtered_symbols}")
+            # Step 2: Direct analysis (skip filtering for small batches)
+            logger.info(f"🔍 Processing {len(batch_data)} stocks from batch")
             
             # Step 3: DeepSeek V3 deep analysis
-            deepseek_v3_analyses = await self.ai_analyzer.deepseek_v3_analysis(filtered_data)
+            deepseek_v3_analyses = await self.ai_analyzer.deepseek_v3_analysis(batch_data)
             logger.info(f"🧠 DeepSeek V3 analyzed: {len(deepseek_v3_analyses)} stocks")
             
             # Step 4: DeepSeek R1 final decisions
-            final_decisions = await self.ai_analyzer.deepseek_r1_decision(
-                deepseek_v3_analyses,
-                filtered_data
-            )
-            logger.info(f"🎯 DeepSeek R1 decisions: {len(final_decisions)}")
+            if deepseek_v3_analyses:
+                final_decisions = await self.ai_analyzer.deepseek_r1_decision(
+                    deepseek_v3_analyses,
+                    batch_data
+                )
+                logger.info(f"🎯 DeepSeek R1 decisions: {len(final_decisions)}")
+                
+                # Step 5: Send alerts
+                if final_decisions:
+                    await self.send_ai_alerts(final_decisions)
+                else:
+                    logger.warning("⚠️ No trading signals generated for this batch")
+            else:
+                logger.warning("⚠️ DeepSeek V3 analysis failed for this batch")
             
-            # Step 5: Send alerts
-            if final_decisions:
-                await self.send_ai_alerts(final_decisions)
+            # Move to next batch for next cycle
+            self.current_batch_index = (self.current_batch_index + batch_size) % total_symbols
+            logger.info(f"📍 Next batch will start from index: {self.current_batch_index}")
             
         except Exception as e:
             logger.error(f"Error in AI scan: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
     
     async def send_ai_alerts(self, decisions):
         """AI decisions को Telegram पर भेजतो"""
@@ -589,7 +650,7 @@ class DhanOptionChainBot:
             logger.error(f"Error sending AI alerts: {e}")
     
     async def run(self):
-        """Main loop - हर 1 minute AI scan"""
+        """Main loop - हर 1 minute AI scan (5 stocks per cycle)"""
         logger.info("🚀 Bot started! Loading security IDs...")
         
         success = await self.load_security_ids()
@@ -597,20 +658,32 @@ class DhanOptionChainBot:
             logger.error("Failed to load security IDs. Exiting...")
             return
         
+        # Store all symbols for batching
+        self.all_symbols = list(self.security_id_map.keys())
+        batch_size = 5
+        total_batches = (len(self.all_symbols) + batch_size - 1) // batch_size
+        
+        logger.info(f"📦 Total {len(self.all_symbols)} stocks divided into {total_batches} batches")
+        logger.info(f"⏱️ Each batch (5 stocks) will be processed every 1 minute")
+        logger.info(f"🔄 Complete cycle time: ~{total_batches} minutes")
+        
         await self.send_startup_message()
         
         while self.running:
             try:
                 timestamp = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
+                current_batch_num = (self.current_batch_index // batch_size) + 1
+                
                 logger.info(f"\n{'='*50}")
                 logger.info(f"🤖 AI Scan Cycle: {timestamp}")
+                logger.info(f"📦 Batch {current_batch_num}/{total_batches}")
                 logger.info(f"{'='*50}")
                 
-                # AI scanning आणि alerts
+                # AI scanning for current batch (5 stocks)
                 await self.ai_scan_and_alert()
                 
-                logger.info("✅ AI scan completed!")
-                logger.info("⏳ Waiting 1 minute for next scan...\n")
+                logger.info("✅ Batch scan completed!")
+                logger.info("⏳ Waiting 1 minute for next batch...\n")
                 
                 # 1 minute wait
                 await asyncio.sleep(60)
@@ -621,18 +694,29 @@ class DhanOptionChainBot:
                 break
             except Exception as e:
                 logger.error(f"Error in main loop: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
                 await asyncio.sleep(60)
     
     async def send_startup_message(self):
         """Startup message"""
         try:
+            batch_size = 5
+            total_batches = (len(self.all_symbols) + batch_size - 1) // batch_size
+            
             msg = "🤖 *AI Option Chain Bot Started!*\n\n"
-            msg += f"📊 Tracking {len(self.security_id_map)} stocks/indices\n"
-            msg += "⏱️ AI Scans every 1 minute\n\n"
-            msg += "🧠 *2-Layer AI System:*\n"
-            msg += "1️⃣ Cerebras Llama 3.3 70B - Quick Filter\n"
-            msg += "2️⃣ DeepSeek V3 - Deep Analysis\n"
-            msg += "3️⃣ DeepSeek R1 - Final Decisions\n\n"
+            msg += f"📊 Tracking {len(self.all_symbols)} stocks/indices\n"
+            msg += f"📦 Divided into {total_batches} batches (5 stocks each)\n"
+            msg += "⏱️ Each batch analyzed every 1 minute\n"
+            msg += f"🔄 Complete cycle: ~{total_batches} minutes\n\n"
+            msg += "🧠 *AI Analysis Pipeline:*\n"
+            msg += "1️⃣ DeepSeek V3 - Technical Analysis\n"
+            msg += "2️⃣ DeepSeek R1 - Final Decisions\n\n"
+            msg += "💡 *Features:*\n"
+            msg += "• Real-time price & option chain data\n"
+            msg += "• Support/Resistance levels\n"
+            msg += "• Entry/Target/Stop Loss\n"
+            msg += "• Risk assessment\n\n"
             msg += "✅ Powered by DhanHQ API v2\n"
             msg += "🚂 Deployed on Railway.app"
             
