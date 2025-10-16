@@ -8,12 +8,12 @@ import csv
 import json
 from groq import Groq
 from openai import OpenAI
-import pytz
+from zoneinfo import ZoneInfo  # ← Changed from pytz
 
 # ========================
 # TIMEZONE FIX - IST (UTC+5:30)
 # ========================
-IST = pytz.timezone('Asia/Kolkata')
+IST = ZoneInfo('Asia/Kolkata')  # ← Changed from pytz.timezone
 
 # Logging
 logging.basicConfig(
