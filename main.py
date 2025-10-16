@@ -360,22 +360,46 @@ class TradingBot:
             if response.status_code == 200:
                 data = response.json()
                 
+                # Check what keys are in response
+                logger.info(f"API Response keys for {symbol}: {list(data.keys())}")
+                
                 if 'open' in data:
                     candles = []
+                    
+                    # Try different possible timestamp keys
+                    timestamps = []
+                    if 'start_Time' in data:
+                        timestamps = data['start_Time']
+                    elif 'timestamp' in data:
+                        timestamps = data['timestamp']
+                    elif 'time' in data:
+                        timestamps = data['time']
+                    else:
+                        # Generate timestamps if not provided
+                        timestamps = [f"2025-10-16 09:{15+i}:00" for i in range(len(data['open']))]
+                    
                     for i in range(len(data['open'])):
                         candles.append({
-                            'timestamp': data['start_Time'][i] if i < len(data['start_Time']) else '',
+                            'timestamp': timestamps[i] if i < len(timestamps) else '',
                             'open': data['open'][i],
                             'high': data['high'][i],
                             'low': data['low'][i],
                             'close': data['close'][i],
                             'volume': data['volume'][i]
                         })
+                    
+                    logger.info(f"{symbol}: Fetched {len(candles)} candles")
                     return candles
+                else:
+                    logger.error(f"{symbol}: No OHLC data in response")
+            else:
+                logger.error(f"{symbol}: API returned status {response.status_code}")
             
             return None
         except Exception as e:
-            logger.error(f"Data error: {e}")
+            logger.error(f"Data error for {symbol}: {e}")
+            import traceback
+            traceback.print_exc()
             return None
     
     async def scan_and_alert(self, symbol):
