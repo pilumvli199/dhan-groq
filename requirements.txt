@@ -11,3 +11,4 @@ asyncio==3.4.3
 
 # Additional
 python-dotenv==1.0.0
+pytz==2023.3
