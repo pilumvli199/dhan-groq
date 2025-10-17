@@ -33,52 +33,26 @@ DHAN_EXPIRY_LIST_URL = f"{DHAN_API_BASE}/v2/optionchain/expirylist"
 DHAN_INTRADAY_URL = f"{DHAN_API_BASE}/v2/charts/intraday"
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 
-# ALL STOCKS LIST (Only Options-Enabled)
+# ALL STOCKS LIST (Only Top Movers - Options-Enabled)
 STOCKS_INDICES = {
-    # Indices (सर्व indices वर options असतात)
+    # Indices (Must Track - High Volume)
     "NIFTY 50": {"symbol": "NIFTY 50", "segment": "IDX_I", "security_id": 13},
     "NIFTY BANK": {"symbol": "NIFTY BANK", "segment": "IDX_I", "security_id": 25},
-    "SENSEX": {"symbol": "SENSEX", "segment": "IDX_I", "security_id": 51},
     "FINNIFTY": {"symbol": "FINNIFTY", "segment": "IDX_I", "security_id": 27},
     
-    # Large Cap Stocks (Options Available - Verified)
+    # Top 12 High Volume Stocks (Options Active)
     "RELIANCE": {"symbol": "RELIANCE", "segment": "NSE_EQ", "security_id": 2885},
     "TCS": {"symbol": "TCS", "segment": "NSE_EQ", "security_id": 11536},
     "HDFCBANK": {"symbol": "HDFCBANK", "segment": "NSE_EQ", "security_id": 1333},
     "SBIN": {"symbol": "SBIN", "segment": "NSE_EQ", "security_id": 3045},
     "BAJFINANCE": {"symbol": "BAJFINANCE", "segment": "NSE_EQ", "security_id": 317},
     "INFY": {"symbol": "INFY", "segment": "NSE_EQ", "security_id": 1594},
-    "HINDUNILVR": {"symbol": "HINDUNILVR", "segment": "NSE_EQ", "security_id": 1394},
     "ITC": {"symbol": "ITC", "segment": "NSE_EQ", "security_id": 1660},
-    "KOTAKBANK": {"symbol": "KOTAKBANK", "segment": "NSE_EQ", "security_id": 1922},
-    "LT": {"symbol": "LT", "segment": "NSE_EQ", "security_id": 2600},
-    "AXISBANK": {"symbol": "AXISBANK", "segment": "NSE_EQ", "security_id": 5900},
-    "ASIANPAINT": {"symbol": "ASIANPAINT", "segment": "NSE_EQ", "security_id": 235},
-    "MARUTI": {"symbol": "MARUTI", "segment": "NSE_EQ", "security_id": 10999},
-    "HCLTECH": {"symbol": "HCLTECH", "segment": "NSE_EQ", "security_id": 7229},
-    "WIPRO": {"symbol": "WIPRO", "segment": "NSE_EQ", "security_id": 3787},
-    "ULTRACEMCO": {"symbol": "ULTRACEMCO", "segment": "NSE_EQ", "security_id": 11532},
-    "TITAN": {"symbol": "TITAN", "segment": "NSE_EQ", "security_id": 3506},
-    "SUNPHARMA": {"symbol": "SUNPHARMA", "segment": "NSE_EQ", "security_id": 3351},
-    "NTPC": {"symbol": "NTPC", "segment": "NSE_EQ", "security_id": 11630},
     "TATAMOTORS": {"symbol": "TATAMOTORS", "segment": "NSE_EQ", "security_id": 3456},
+    "AXISBANK": {"symbol": "AXISBANK", "segment": "NSE_EQ", "security_id": 5900},
     "TATASTEEL": {"symbol": "TATASTEEL", "segment": "NSE_EQ", "security_id": 3499},
-    "M&M": {"symbol": "M&M", "segment": "NSE_EQ", "security_id": 2031},
-    "JSWSTEEL": {"symbol": "JSWSTEEL", "segment": "NSE_EQ", "security_id": 6733},
-    "HINDALCO": {"symbol": "HINDALCO", "segment": "NSE_EQ", "security_id": 1363},
-    "COALINDIA": {"symbol": "COALINDIA", "segment": "NSE_EQ", "security_id": 5215},
-    "ONGC": {"symbol": "ONGC", "segment": "NSE_EQ", "security_id": 2475},
-    "TECHM": {"symbol": "TECHM", "segment": "NSE_EQ", "security_id": 13538},
-    "DRREDDY": {"symbol": "DRREDDY", "segment": "NSE_EQ", "security_id": 3721},
-    "BRITANNIA": {"symbol": "BRITANNIA", "segment": "NSE_EQ", "security_id": 547},
-    "EICHERMOT": {"symbol": "EICHERMOT", "segment": "NSE_EQ", "security_id": 910},
-    "DIVISLAB": {"symbol": "DIVISLAB", "segment": "NSE_EQ", "security_id": 10940},
     "ADANIENT": {"symbol": "ADANIENT", "segment": "NSE_EQ", "security_id": 25},
     "TRENT": {"symbol": "TRENT", "segment": "NSE_EQ", "security_id": 1964},
-    "BAJAJFINSV": {"symbol": "BAJAJFINSV", "segment": "NSE_EQ", "security_id": 4963},
-    "VEDL": {"symbol": "VEDL", "segment": "NSE_EQ", "security_id": 3063},
-    "GRASIM": {"symbol": "GRASIM", "segment": "NSE_EQ", "security_id": 1232},
-    "SIEMENS": {"symbol": "SIEMENS", "segment": "NSE_EQ", "security_id": 3150},
 }
 
 # ========================
@@ -102,6 +76,10 @@ class SmartTradingBot:
         except Exception as e:
             logger.warning(f"⚠️ Redis not available: {e}")
             self.redis_client = None
+        
+        # Session for connection pooling (FASTER API calls!)
+        self.session = requests.Session()
+        self.session.headers.update(self.headers)
         
         logger.info("Bot initialized successfully")
     
@@ -127,18 +105,15 @@ class SmartTradingBot:
                 "toDate": to_date.strftime("%Y-%m-%d")
             }
             
-            response = requests.post(
+            # Use session for faster calls
+            response = self.session.post(
                 DHAN_INTRADAY_URL,
                 json=payload,
-                headers=self.headers,
-                timeout=15
+                timeout=10  # Reduced from 15
             )
             
             if response.status_code == 200:
                 data = response.json()
-                
-                # Debug: Response format check करतो
-                logger.debug(f"{symbol} API Response keys: {list(data.keys())}")
                 
                 # Different possible timestamp fields check करतो
                 timestamp_field = None
@@ -148,8 +123,7 @@ class SmartTradingBot:
                         break
                 
                 if not timestamp_field:
-                    logger.warning(f"{symbol}: No timestamp field found. Keys: {list(data.keys())}")
-                    # Timestamp नसेल तर index-based generate करतो
+                    logger.debug(f"{symbol}: No timestamp field, using index")
                     timestamps = [f"{i:04d}" for i in range(len(data.get('open', [])))]
                 else:
                     timestamps = data[timestamp_field]
@@ -162,7 +136,6 @@ class SmartTradingBot:
                 volumes = data.get('volume', [])
                 
                 if not opens:
-                    logger.warning(f"{symbol}: Empty data arrays")
                     return None
                 
                 candles = []
@@ -178,26 +151,19 @@ class SmartTradingBot:
                             'close': float(closes[i]) if i < len(closes) else 0,
                             'volume': int(volumes[i]) if i < len(volumes) else 0
                         })
-                    except (ValueError, TypeError) as e:
-                        logger.debug(f"{symbol}: Skipping candle {i}: {e}")
+                    except (ValueError, TypeError):
                         continue
                 
                 if not candles:
-                    logger.warning(f"{symbol}: No valid candles created")
                     return None
                 
-                # Last 50 candles return करतो
                 result = candles[-50:] if len(candles) > 50 else candles
-                logger.info(f"{symbol}: Got {len(result)} candles")
                 return result
             
-            logger.warning(f"{symbol}: API returned status {response.status_code}")
             return None
             
         except Exception as e:
-            logger.error(f"Error getting candles for {symbol}: {e}")
-            import traceback
-            logger.debug(traceback.format_exc())
+            logger.debug(f"{symbol}: Candles error: {e}")
             return None
     
     def get_option_chain(self, security_id, segment, expiry):
@@ -209,11 +175,11 @@ class SmartTradingBot:
                 "Expiry": expiry
             }
             
-            response = requests.post(
+            # Use session for faster calls
+            response = self.session.post(
                 DHAN_OPTION_CHAIN_URL,
                 json=payload,
-                headers=self.headers,
-                timeout=15
+                timeout=10  # Reduced from 15
             )
             
             if response.status_code == 200:
@@ -222,7 +188,7 @@ class SmartTradingBot:
             return None
             
         except Exception as e:
-            logger.error(f"Error getting option chain: {e}")
+            logger.debug(f"Option chain error: {e}")
             return None
     
     def get_nearest_expiry(self, security_id, segment):
@@ -233,11 +199,11 @@ class SmartTradingBot:
                 "UnderlyingSeg": segment
             }
             
-            response = requests.post(
+            # Use session for faster calls
+            response = self.session.post(
                 DHAN_EXPIRY_LIST_URL,
                 json=payload,
-                headers=self.headers,
-                timeout=10
+                timeout=8  # Reduced from 10
             )
             
             if response.status_code == 200:
@@ -248,7 +214,7 @@ class SmartTradingBot:
             return None
             
         except Exception as e:
-            logger.error(f"Error getting expiry: {e}")
+            logger.debug(f"Expiry error: {e}")
             return None
     
     # ═══════════════════════════════════════════════════════════
@@ -543,37 +509,16 @@ class SmartTradingBot:
         }
     
     async def verify_with_ai(self, ai_data):
-        """DeepSeek AI verification"""
+        """DeepSeek AI verification (FASTER!)"""
         try:
-            prompt = f"""You are an expert Indian options trader. Verify this signal.
+            prompt = f"""Expert Indian options trader. Verify signal quickly.
 
-BOT DETECTED: {ai_data['bot_analysis']['signal']} Signal
-Score: {ai_data['bot_analysis']['score']}/100
+BOT: {ai_data['bot_analysis']['signal']} ({ai_data['bot_analysis']['score']}/100)
+Symbol: {ai_data['symbol']} | Spot: ₹{ai_data['spot_price']}
+PCR: {ai_data['oi_data']['pcr']} | Pattern: {ai_data['pattern']}
 
-Symbol: {ai_data['symbol']}
-Spot: ₹{ai_data['spot_price']}
-
-OI Data:
-PCR: {ai_data['oi_data']['pcr']}
-Changes: {json.dumps(ai_data['oi_data']['significant_changes'])}
-
-Pattern: {ai_data['pattern']}
-Support: {ai_data['support']}
-Resistance: {ai_data['resistance']}
-
-Last 5 Candles:
-{json.dumps(ai_data['candles'][-5:])}
-
-Task: Verify signal. Respond in JSON:
-{{
-  "status": "CONFIRMED" or "REJECTED",
-  "entry": 24870,
-  "target": 24950,
-  "stop_loss": 24820,
-  "risk_reward": 1.6,
-  "confidence": 85,
-  "reasoning": ["Point 1", "Point 2"]
-}}"""
+Respond JSON ONLY:
+{{"status":"CONFIRMED/REJECTED","entry":24870,"target":24950,"stop_loss":24820,"risk_reward":1.6,"confidence":85,"reasoning":["Point 1","Point 2"]}}"""
 
             headers_ai = {
                 'Authorization': f'Bearer {DEEPSEEK_API_KEY}',
@@ -583,14 +528,15 @@ Task: Verify signal. Respond in JSON:
             payload = {
                 'model': 'deepseek-chat',
                 'messages': [{'role': 'user', 'content': prompt}],
-                'temperature': 0.3
+                'temperature': 0.3,
+                'max_tokens': 300  # Limit for faster response
             }
             
             response = requests.post(
                 DEEPSEEK_API_URL,
                 json=payload,
                 headers=headers_ai,
-                timeout=30
+                timeout=15  # Reduced from 30
             )
             
             if response.status_code == 200:
@@ -598,12 +544,17 @@ Task: Verify signal. Respond in JSON:
                 content = ai_response['choices'][0]['message']['content']
                 
                 # Parse JSON from response
+                import re
+                json_match = re.search(r'\{[^{}]*\}', content)
+                if json_match:
+                    return json.loads(json_match.group())
+                
                 return json.loads(content)
             
             return None
             
         except Exception as e:
-            logger.error(f"AI verification error: {e}")
+            logger.debug(f"AI error: {e}")
             return None
     
     # ═══════════════════════════════════════════════════════════
@@ -738,24 +689,79 @@ Key Changes:
     # ═══════════════════════════════════════════════════════════
     
     async def analyze_symbol(self, symbol, info):
-        """Single symbol चं complete analysis"""
+        """Single symbol चं complete analysis (OPTIMIZED!)"""
         try:
             security_id = info['security_id']
             segment = info['segment']
             
-            logger.info(f"\n{'='*60}")
-            logger.info(f"Analyzing: {symbol}")
-            logger.info(f"{'='*60}")
-            
             # Step 1: Expiry घेतो
             expiry = self.get_nearest_expiry(security_id, segment)
             if not expiry:
-                logger.warning(f"{symbol}: No expiry found (Options might not be available)")
+                logger.debug(f"{symbol}: No expiry")
                 return
             
-            logger.info(f"{symbol}: Expiry = {expiry}")
-            
             # Step 2: Option chain घेतो
+            oc_data = self.get_option_chain(security_id, segment, expiry)
+            if not oc_data:
+                logger.debug(f"{symbol}: No OC data")
+                return
+            
+            spot_price = oc_data.get('last_price', 0)
+            
+            # Step 3: Candles घेतो
+            candles = self.get_historical_candles(security_id, segment, symbol)
+            if not candles or len(candles) < 20:
+                logger.debug(f"{symbol}: Not enough candles")
+                return
+            
+            # Step 4: OI changes calculate करतो
+            oi_changes = self.calculate_oi_changes(oc_data, symbol)
+            if not oi_changes:
+                logger.debug(f"{symbol}: First run, saving data")
+                return
+            
+            # Step 5: Bot's Analysis
+            bot_analysis = self.calculate_signal_score(
+                oi_changes, candles, spot_price, oc_data
+            )
+            
+            if not bot_analysis:
+                return
+            
+            # Step 6: Check if score >= 70
+            if not bot_analysis['send_to_ai']:
+                logger.debug(f"{symbol}: Score {bot_analysis['total_score']}/100 (Low)")
+                return
+            
+            # 🔥 HIGH SCORE DETECTED!
+            logger.info(f"{'='*60}")
+            logger.info(f"🔥 {symbol}: HIGH SCORE = {bot_analysis['total_score']}/100")
+            logger.info(f"  ├─ Spot: ₹{spot_price:,.2f}")
+            logger.info(f"  ├─ Signal: {bot_analysis['signal_type']}")
+            logger.info(f"  ├─ OI: {bot_analysis['oi_score']}/50")
+            logger.info(f"  └─ Chart: {bot_analysis['chart_score']}/50")
+            logger.info(f"{'='*60}")
+            
+            # Step 7: Prepare data for AI
+            ai_data = self.prepare_ai_data(
+                symbol, spot_price, oi_changes, candles, bot_analysis
+            )
+            
+            # Step 8: AI Verification
+            logger.info(f"🤖 {symbol}: Verifying with DeepSeek AI...")
+            ai_response = await self.verify_with_ai(ai_data)
+            
+            if not ai_response:
+                logger.warning(f"{symbol}: AI unavailable")
+                return
+            
+            logger.info(f"✅ {symbol}: AI {ai_response['status']} ({ai_response.get('confidence', 0)}%)")
+            
+            # Step 9: Send signal to Telegram
+            await self.send_signal(symbol, ai_data, ai_response, bot_analysis)
+            
+        except Exception as e:
+            logger.debug(f"{symbol}: Error - {e}")ो
             oc_data = self.get_option_chain(security_id, segment, expiry)
             if not oc_data:
                 logger.warning(f"{symbol}: No option chain data")
@@ -827,6 +833,16 @@ Key Changes:
     # MAIN RUN LOOP
     # ═══════════════════════════════════════════════════════════
     
+    async def analyze_batch_parallel(self, batch):
+        """Batch मधले सगळे symbols parallel process करतो (FAST!)"""
+        tasks = []
+        for symbol in batch:
+            info = STOCKS_INDICES[symbol]
+            tasks.append(self.analyze_symbol(symbol, info))
+        
+        # सगळे parallel run करतो
+        await asyncio.gather(*tasks, return_exceptions=True)
+    
     async def run(self):
         """Main bot loop - every 5 minutes"""
         logger.info("🚀 Smart Trading Bot Started!")
@@ -834,13 +850,14 @@ Key Changes:
         # Startup message
         await self.send_startup_message()
         
-        # Symbol batches (5 at a time)
+        # Symbol batches (5 at a time for parallel processing)
         all_symbols = list(STOCKS_INDICES.keys())
         batch_size = 5
         batches = [all_symbols[i:i+batch_size] 
                   for i in range(0, len(all_symbols), batch_size)]
         
         logger.info(f"📊 Tracking {len(all_symbols)} symbols in {len(batches)} batches")
+        logger.info(f"⚡ PARALLEL MODE: ~30 sec per batch!")
         
         while self.running:
             try:
@@ -849,30 +866,37 @@ Key Changes:
                 logger.info(f"CYCLE START: {cycle_start.strftime('%Y-%m-%d %H:%M:%S')}")
                 logger.info(f"{'#'*80}\n")
                 
-                # Process each batch
+                # Process each batch (PARALLEL!)
                 for batch_num, batch in enumerate(batches, 1):
+                    batch_start = datetime.now()
                     logger.info(f"\n📦 Batch {batch_num}/{len(batches)}: {batch}")
                     
-                    for symbol in batch:
-                        info = STOCKS_INDICES[symbol]
-                        await self.analyze_symbol(symbol, info)
-                        await asyncio.sleep(2)  # 2 sec between symbols
+                    # PARALLEL PROCESSING! 🚀
+                    await self.analyze_batch_parallel(batch)
                     
-                    # Wait between batches
+                    batch_duration = (datetime.now() - batch_start).total_seconds()
+                    logger.info(f"✅ Batch {batch_num} completed in {batch_duration:.1f}s")
+                    
+                    # Minimal wait between batches (Dhan rate limit)
                     if batch_num < len(batches):
-                        logger.info(f"⏸️ Waiting 10 seconds before next batch...")
-                        await asyncio.sleep(10)
+                        logger.info(f"⏸️ Waiting 5 seconds before next batch...")
+                        await asyncio.sleep(5)
                 
                 cycle_end = datetime.now()
                 duration = (cycle_end - cycle_start).total_seconds()
                 
+                # Dynamic sleep calculation
+                target_cycle = 300  # 5 minutes
+                sleep_time = max(30, target_cycle - duration)  # Min 30 sec sleep
+                
                 logger.info(f"\n{'#'*80}")
-                logger.info(f"CYCLE COMPLETE: Duration = {duration:.1f}s")
-                logger.info(f"Next cycle in 5 minutes...")
+                logger.info(f"CYCLE COMPLETE!")
+                logger.info(f"├─ Duration: {duration:.1f}s / {target_cycle}s")
+                logger.info(f"├─ Sleeping: {sleep_time:.0f}s")
+                logger.info(f"└─ Next cycle: {(datetime.now() + timedelta(seconds=sleep_time)).strftime('%H:%M:%S')}")
                 logger.info(f"{'#'*80}\n")
                 
-                # Wait 5 minutes
-                await asyncio.sleep(300)
+                await asyncio.sleep(sleep_time)
                 
             except KeyboardInterrupt:
                 logger.info("Bot stopped by user")
