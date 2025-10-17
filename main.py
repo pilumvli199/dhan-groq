@@ -419,7 +419,7 @@ class DhanOptionChainBot:
             return None
     
     async def get_deepseek_analysis(self, analysis_data):
-        """DeepSeek R1 Reasoner कडून AI analysis घेतो"""
+        """DeepSeek R1 Reasoner कडून AI analysis घेतो (with fallback to V3)"""
         try:
             if not DEEPSEEK_API_KEY:
                 logger.error("DeepSeek API key missing!")
@@ -434,7 +434,7 @@ Spot Price: ₹{analysis_data['spot_price']:,.2f}
 ATM Strike: ₹{analysis_data['atm_strike']:,.0f}
 Expiry: {analysis_data['expiry']}
 
-CANDLESTICK DATA (Last 50 × 5-min candles):
+CANDLESTICK DATA (Last 20 × 5-min candles):
 {json.dumps(analysis_data['candles'][-20:], indent=2)}
 
 OPTION CHAIN DATA (ATM ± 5 strikes with Greeks & OI):
@@ -519,52 +519,43 @@ If CLEAR opportunity exists:
                 'Content-Type': 'application/json'
             }
             
-            # DeepSeek R1 Reasoner model use करतो (खूपच powerful reasoning!)
-            payload = {
-                'model': 'deepseek-reasoner',  # ✅ Reasoner mode (R1 model)
+            # पहिला प्रयत्न: R1 Reasoner (जास्त timeout सह)
+            payload_reasoner = {
+                'model': 'deepseek-reasoner',
                 'messages': [
-                    {
-                        'role': 'user', 
-                        'content': prompt
-                    }
+                    {'role': 'user', 'content': prompt}
                 ],
-                'temperature': 1.0,  # Reasoner साठी recommended temperature
-                'max_tokens': 8000  # Reasoner साठी जास्त tokens (reasoning_content + answer)
+                'temperature': 1.0,
+                'max_tokens': 8000
             }
             
-            logger.info(f"🧠 Calling DeepSeek R1 Reasoner for {analysis_data['symbol']}...")
+            logger.info(f"🧠 Trying DeepSeek R1 Reasoner for {analysis_data['symbol']}...")
             
-            response = requests.post(
-                DEEPSEEK_API_URL,
-                headers=headers,
-                json=payload,
-                timeout=45  # Reasoner थोडा जास्त वेळ घेतो
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
+            try:
+                response = requests.post(
+                    DEEPSEEK_API_URL,
+                    headers=headers,
+                    json=payload_reasoner,
+                    timeout=90  # 90 seconds timeout
+                )
                 
-                # Reasoner response format वेगळा आहे:
-                # reasoning_content = internal thinking process
-                # content = final answer
-                message = result['choices'][0]['message']
-                
-                # Reasoning process (optional - तुम्ही पाहू शकता logs मध्ये)
-                reasoning_content = message.get('reasoning_content', '')
-                if reasoning_content:
-                    logger.info(f"🧠 Reasoner thinking process:\n{reasoning_content[:500]}...")
-                
-                # Final answer
-                content = message.get('content', '')
-                
-                try:
+                if response.status_code == 200:
+                    result = response.json()
+                    message = result['choices'][0]['message']
+                    
+                    # Reasoning process (optional)
+                    reasoning_content = message.get('reasoning_content', '')
+                    if reasoning_content:
+                        logger.info(f"🧠 Reasoner thinking: {reasoning_content[:200]}...")
+                    
+                    content = message.get('content', '')
+                    
                     start = content.find('{')
                     end = content.rfind('}') + 1
                     if start != -1 and end != 0:
                         json_str = content[start:end]
                         analysis = json.loads(json_str)
                         
-                        # Extra validation: फक्त high confidence signals
                         signal = analysis.get('signal', 'NO TRADE')
                         confidence = analysis.get('confidence', 0)
                         
@@ -576,21 +567,69 @@ If CLEAR opportunity exists:
                                 'reasoning': f'Confidence too low ({confidence}%). Need ≥75% for signal.'
                             }
                         
-                        logger.info(f"✅ DeepSeek R1 Reasoner analysis: {signal} (Confidence: {confidence}%)")
+                        logger.info(f"✅ R1 Reasoner: {signal} (Confidence: {confidence}%)")
+                        return analysis
+                        
+            except requests.exceptions.Timeout:
+                logger.warning(f"⏱️ R1 Reasoner timeout for {analysis_data['symbol']}. Falling back to V3 Chat...")
+            except Exception as e:
+                logger.warning(f"⚠️ R1 Reasoner error: {e}. Falling back to V3 Chat...")
+            
+            # Fallback: DeepSeek V3 Chat (fast & reliable)
+            payload_chat = {
+                'model': 'deepseek-chat',
+                'messages': [
+                    {'role': 'user', 'content': prompt}
+                ],
+                'temperature': 0.1,
+                'max_tokens': 800
+            }
+            
+            logger.info(f"🔄 Using DeepSeek V3 Chat (fallback) for {analysis_data['symbol']}...")
+            
+            response = requests.post(
+                DEEPSEEK_API_URL,
+                headers=headers,
+                json=payload_chat,
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                content = result['choices'][0]['message']['content']
+                
+                try:
+                    start = content.find('{')
+                    end = content.rfind('}') + 1
+                    if start != -1 and end != 0:
+                        json_str = content[start:end]
+                        analysis = json.loads(json_str)
+                        
+                        signal = analysis.get('signal', 'NO TRADE')
+                        confidence = analysis.get('confidence', 0)
+                        
+                        if signal != 'NO TRADE' and confidence < 75:
+                            logger.info(f"⚠️ {analysis_data['symbol']}: Signal rejected - Low confidence ({confidence}%)")
+                            return {
+                                'signal': 'NO TRADE',
+                                'confidence': confidence,
+                                'reasoning': f'Confidence too low ({confidence}%). Need ≥75% for signal.'
+                            }
+                        
+                        logger.info(f"✅ V3 Chat: {signal} (Confidence: {confidence}%)")
                         return analysis
                     else:
-                        logger.warning("No JSON found in Reasoner response")
+                        logger.warning("No JSON found in V3 response")
                         return None
                 except json.JSONDecodeError as e:
                     logger.error(f"JSON parse error: {e}")
-                    logger.error(f"Response content: {content}")
                     return None
             else:
-                logger.error(f"DeepSeek API error: {response.status_code} - {response.text}")
+                logger.error(f"DeepSeek V3 error: {response.status_code} - {response.text}")
                 return None
                 
         except Exception as e:
-            logger.error(f"Error calling DeepSeek Reasoner: {e}")
+            logger.error(f"Error calling DeepSeek API: {e}")
             return None
     
     def format_signal_message(self, symbol, analysis):
@@ -753,16 +792,27 @@ If CLEAR opportunity exists:
     async def send_startup_message(self):
         """Bot सुरू झाल्यावर message"""
         try:
-            msg = "🤖 *Dhan Option Chain Bot with DeepSeek AI Started!*\n\n"
+            msg = "🤖 *Dhan Option Chain Bot with DeepSeek R1 Reasoner Started!*\n\n"
             msg += f"📊 Tracking {len(self.security_id_map)} stocks/indices\n"
-            msg += "⏱️ Updates every 5 minutes\n"
-            msg += "🤖 AI-Powered Features:\n"
-            msg += "  • DeepSeek V3 Analysis\n"
-            msg += "  • CE/PE Buy Signals\n"
+            msg += "⏱️ Updates every 5 minutes\n\n"
+            msg += "🧠 *AI-Powered Features:*\n"
+            msg += "  • DeepSeek R1 Reasoner (Advanced Reasoning)\n"
+            msg += "  • Pure Price Action Analysis\n"
+            msg += "  • Deep Option Chain Analysis\n"
+            msg += "  • CE/PE Buy Signals (Only High-Probability)\n"
             msg += "  • Entry/Target/Stoploss\n"
-            msg += "  • Candlestick Charts (50 candles)\n"
-            msg += "  • Option Chain + Greeks\n\n"
-            msg += "✅ Powered by DhanHQ + DeepSeek AI\n"
+            msg += "  • Confidence ≥ 75% Required\n\n"
+            msg += "📈 *Analysis Includes:*\n"
+            msg += "  • Candlestick Patterns\n"
+            msg += "  • Support/Resistance\n"
+            msg += "  • Volume Confirmation\n"
+            msg += "  • OI Buildup/Unwinding\n"
+            msg += "  • Greeks & IV Analysis\n\n"
+            msg += "⚠️ *Signal Policy:*\n"
+            msg += "  • Only high-quality setups sent\n"
+            msg += "  • NO TRADE signals are skipped\n"
+            msg += "  • Quality > Quantity\n\n"
+            msg += "✅ Powered by DhanHQ + DeepSeek R1 Reasoner\n"
             msg += "🚂 Deployed on Railway.app\n\n"
             msg += "_Market Hours: 9:15 AM - 3:30 PM (Mon-Fri)_"
             
