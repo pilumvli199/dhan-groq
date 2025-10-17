@@ -33,26 +33,66 @@ DHAN_EXPIRY_LIST_URL = f"{DHAN_API_BASE}/v2/optionchain/expirylist"
 DHAN_INTRADAY_URL = f"{DHAN_API_BASE}/v2/charts/intraday"
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 
-# ALL STOCKS LIST (Only Top Movers - Options-Enabled)
+# ALL STOCKS LIST - TOP 50 FNO STOCKS (Options-Enabled)
 STOCKS_INDICES = {
     # Indices (Must Track - High Volume)
     "NIFTY 50": {"symbol": "NIFTY 50", "segment": "IDX_I", "security_id": 13},
     "NIFTY BANK": {"symbol": "NIFTY BANK", "segment": "IDX_I", "security_id": 25},
     "FINNIFTY": {"symbol": "FINNIFTY", "segment": "IDX_I", "security_id": 27},
+    "SENSEX": {"symbol": "SENSEX", "segment": "IDX_I", "security_id": 51},
+    "MIDCPNIFTY": {"symbol": "MIDCPNIFTY", "segment": "IDX_I", "security_id": 288},
     
-    # Top 12 High Volume Stocks (Options Active)
+    # Top 45 FNO Stocks (High Volume + Options Active)
     "RELIANCE": {"symbol": "RELIANCE", "segment": "NSE_EQ", "security_id": 2885},
     "TCS": {"symbol": "TCS", "segment": "NSE_EQ", "security_id": 11536},
     "HDFCBANK": {"symbol": "HDFCBANK", "segment": "NSE_EQ", "security_id": 1333},
-    "SBIN": {"symbol": "SBIN", "segment": "NSE_EQ", "security_id": 3045},
-    "BAJFINANCE": {"symbol": "BAJFINANCE", "segment": "NSE_EQ", "security_id": 317},
     "INFY": {"symbol": "INFY", "segment": "NSE_EQ", "security_id": 1594},
+    "ICICIBANK": {"symbol": "ICICIBANK", "segment": "NSE_EQ", "security_id": 1330},
+    "HINDUNILVR": {"symbol": "HINDUNILVR", "segment": "NSE_EQ", "security_id": 1394},
     "ITC": {"symbol": "ITC", "segment": "NSE_EQ", "security_id": 1660},
-    "TATAMOTORS": {"symbol": "TATAMOTORS", "segment": "NSE_EQ", "security_id": 3456},
+    "SBIN": {"symbol": "SBIN", "segment": "NSE_EQ", "security_id": 3045},
+    "BHARTIARTL": {"symbol": "BHARTIARTL", "segment": "NSE_EQ", "security_id": 392},
+    "KOTAKBANK": {"symbol": "KOTAKBANK", "segment": "NSE_EQ", "security_id": 1922},
+    "LT": {"symbol": "LT", "segment": "NSE_EQ", "security_id": 2672},
     "AXISBANK": {"symbol": "AXISBANK", "segment": "NSE_EQ", "security_id": 5900},
+    "BAJFINANCE": {"symbol": "BAJFINANCE", "segment": "NSE_EQ", "security_id": 317},
+    "ASIANPAINT": {"symbol": "ASIANPAINT", "segment": "NSE_EQ", "security_id": 236},
+    "MARUTI": {"symbol": "MARUTI", "segment": "NSE_EQ", "security_id": 10999},
+    "HCLTECH": {"symbol": "HCLTECH", "segment": "NSE_EQ", "security_id": 7229},
+    "WIPRO": {"symbol": "WIPRO", "segment": "NSE_EQ", "security_id": 3787},
+    "TITAN": {"symbol": "TITAN", "segment": "NSE_EQ", "security_id": 3506},
+    "ULTRACEMCO": {"symbol": "ULTRACEMCO", "segment": "NSE_EQ", "security_id": 11532},
+    "NESTLEIND": {"symbol": "NESTLEIND", "segment": "NSE_EQ", "security_id": 17963},
+    "SUNPHARMA": {"symbol": "SUNPHARMA", "segment": "NSE_EQ", "security_id": 3351},
+    "TATAMOTORS": {"symbol": "TATAMOTORS", "segment": "NSE_EQ", "security_id": 3456},
     "TATASTEEL": {"symbol": "TATASTEEL", "segment": "NSE_EQ", "security_id": 3499},
+    "BAJAJFINSV": {"symbol": "BAJAJFINSV", "segment": "NSE_EQ", "security_id": 4598},
+    "ONGC": {"symbol": "ONGC", "segment": "NSE_EQ", "security_id": 2475},
+    "NTPC": {"symbol": "NTPC", "segment": "NSE_EQ", "security_id": 11630},
+    "POWERGRID": {"symbol": "POWERGRID", "segment": "NSE_EQ", "security_id": 2752},
+    "M&M": {"symbol": "M&M", "segment": "NSE_EQ", "security_id": 2031},
+    "JSWSTEEL": {"symbol": "JSWSTEEL", "segment": "NSE_EQ", "security_id": 6733},
+    "INDUSINDBK": {"symbol": "INDUSINDBK", "segment": "NSE_EQ", "security_id": 5258},
+    "TECHM": {"symbol": "TECHM", "segment": "NSE_EQ", "security_id": 13538},
+    "HINDALCO": {"symbol": "HINDALCO", "segment": "NSE_EQ", "security_id": 1363},
+    "COALINDIA": {"symbol": "COALINDIA", "segment": "NSE_EQ", "security_id": 5215},
     "ADANIENT": {"symbol": "ADANIENT", "segment": "NSE_EQ", "security_id": 25},
+    "ADANIPORTS": {"symbol": "ADANIPORTS", "segment": "NSE_EQ", "security_id": 31},
     "TRENT": {"symbol": "TRENT", "segment": "NSE_EQ", "security_id": 1964},
+    "DLF": {"symbol": "DLF", "segment": "NSE_EQ", "security_id": 966},
+    "GRASIM": {"symbol": "GRASIM", "segment": "NSE_EQ", "security_id": 1232},
+    "DIVISLAB": {"symbol": "DIVISLAB", "segment": "NSE_EQ", "security_id": 10940},
+    "CIPLA": {"symbol": "CIPLA", "segment": "NSE_EQ", "security_id": 694},
+    "DRREDDY": {"symbol": "DRREDDY", "segment": "NSE_EQ", "security_id": 3721},
+    "EICHERMOT": {"symbol": "EICHERMOT", "segment": "NSE_EQ", "security_id": 1023},
+    "HEROMOTOCO": {"symbol": "HEROMOTOCO", "segment": "NSE_EQ", "security_id": 1348},
+    "BRITANNIA": {"symbol": "BRITANNIA", "segment": "NSE_EQ", "security_id": 547},
+    "TATACONSUM": {"symbol": "TATACONSUM", "segment": "NSE_EQ", "security_id": 3432},
+    "GODREJCP": {"symbol": "GODREJCP", "segment": "NSE_EQ", "security_id": 7713},
+    "DABUR": {"symbol": "DABUR", "segment": "NSE_EQ", "security_id": 881},
+    "BEL": {"symbol": "BEL", "segment": "NSE_EQ", "security_id": 383},
+    "SIEMENS": {"symbol": "SIEMENS", "segment": "NSE_EQ", "security_id": 3150},
+    "BPCL": {"symbol": "BPCL", "segment": "NSE_EQ", "security_id": 500},
 }
 
 # ========================
@@ -784,14 +824,15 @@ Key Changes:
         # Startup message
         await self.send_startup_message()
         
-        # Symbol batches (5 at a time for parallel processing)
+        # Symbol batches (10 at a time for parallel processing)
         all_symbols = list(STOCKS_INDICES.keys())
-        batch_size = 5
+        batch_size = 10  # Increased from 5 to 10
         batches = [all_symbols[i:i+batch_size] 
                   for i in range(0, len(all_symbols), batch_size)]
         
         logger.info(f"📊 Tracking {len(all_symbols)} symbols in {len(batches)} batches")
-        logger.info(f"⚡ PARALLEL MODE: ~30 sec per batch!")
+        logger.info(f"⚡ PARALLEL MODE: 10 stocks per batch!")
+        logger.info(f"⏱️ Estimated cycle time: {len(batches) * 30} seconds")
         
         while self.running:
             try:
@@ -811,10 +852,10 @@ Key Changes:
                     batch_duration = (datetime.now() - batch_start).total_seconds()
                     logger.info(f"✅ Batch {batch_num} completed in {batch_duration:.1f}s")
                     
-                    # Minimal wait between batches (Dhan rate limit)
+                    # Minimal wait between batches (Dhan rate limit protection)
                     if batch_num < len(batches):
-                        logger.info(f"⏸️ Waiting 5 seconds before next batch...")
-                        await asyncio.sleep(5)
+                        logger.info(f"⏸️ Waiting 3 seconds before next batch...")
+                        await asyncio.sleep(3)  # Reduced from 5 to 3
                 
                 cycle_end = datetime.now()
                 duration = (cycle_end - cycle_start).total_seconds()
