@@ -92,7 +92,82 @@ class SmartTradingBot:
         # Failed symbols tracking
         self.failed_symbols = set()
         
+        # 🔥 Rate limiting: Option chain API = 1 request per 3 seconds
+        self.last_option_chain_call = 0
+        self.option_chain_rate_limit = 3  # seconds
+        
         logger.info("Bot initialized successfully")
+    
+    def test_api_connection(self):
+        """Test Dhan API connection"""
+        logger.info("\n" + "="*80)
+        logger.info("🧪 TESTING DHAN API CONNECTION")
+        logger.info("="*80)
+        
+        # Test 1: NIFTY 50
+        logger.info("\n📊 Test 1: NIFTY 50 Expiry List")
+        try:
+            payload = {
+                "UnderlyingScrip": 13,  # INTEGER, not string!
+                "UnderlyingSeg": "IDX_I"
+            }
+            logger.info(f"Request: {payload}")
+            
+            response = self.session.post(
+                DHAN_EXPIRY_LIST_URL,
+                json=payload,
+                timeout=10
+            )
+            
+            logger.info(f"Status: {response.status_code}")
+            logger.info(f"Response: {response.text}")
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('status') == 'success':
+                    logger.info(f"✅ SUCCESS! Found {len(data.get('data', []))} expiries")
+                else:
+                    logger.error(f"❌ FAILED: {data}")
+            
+        except Exception as e:
+            logger.error(f"❌ Error: {e}")
+        
+        # Test 2: RELIANCE Stock
+        logger.info("\n📊 Test 2: RELIANCE Expiry List")
+        try:
+            payload = {
+                "UnderlyingScrip": 2885,  # INTEGER
+                "UnderlyingSeg": "NSE_FO"  # Not NSE_EQ!
+            }
+            logger.info(f"Request: {payload}")
+            
+            response = self.session.post(
+                DHAN_EXPIRY_LIST_URL,
+                json=payload,
+                timeout=10
+            )
+            
+            logger.info(f"Status: {response.status_code}")
+            logger.info(f"Response: {response.text}")
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('status') == 'success':
+                    logger.info(f"✅ SUCCESS! Found {len(data.get('data', []))} expiries")
+                else:
+                    logger.error(f"❌ FAILED: {data}")
+            
+        except Exception as e:
+            logger.error(f"❌ Error: {e}")
+        
+        # Test 3: Check headers
+        logger.info("\n📊 Test 3: Check Authentication")
+        logger.info(f"Client ID: {DHAN_CLIENT_ID[:10]}...")
+        logger.info(f"Token: {DHAN_ACCESS_TOKEN[:20]}...")
+        
+        logger.info("\n" + "="*80)
+        logger.info("🧪 API TEST COMPLETE")
+        logger.info("="*80 + "\n")
     
     def get_ist_time(self):
         """Current Indian time"""
@@ -195,13 +270,23 @@ class SmartTradingBot:
             return None
     
     def get_option_chain(self, security_id, segment, expiry):
-        """Option chain data - FIX: Correct segment usage"""
+        """Option chain data - FIXED per Dhan documentation"""
         try:
+            # 🔥 RATE LIMITING: Wait if needed (1 request per 3 seconds)
+            import time
+            current_time = time.time()
+            time_since_last_call = current_time - self.last_option_chain_call
+            
+            if time_since_last_call < self.option_chain_rate_limit:
+                sleep_time = self.option_chain_rate_limit - time_since_last_call
+                logger.debug(f"  ⏱️ Rate limit: sleeping {sleep_time:.1f}s")
+                time.sleep(sleep_time)
+            
             # FIX: Use NSE_FO for stocks, IDX_I for indices
             api_segment = "IDX_I" if segment == "IDX_I" else "NSE_FO"
             
             payload = {
-                "UnderlyingScrip": str(security_id),
+                "UnderlyingScrip": int(security_id),  # 🔥 MUST BE INTEGER!
                 "UnderlyingSeg": api_segment,
                 "Expiry": expiry
             }
@@ -211,51 +296,56 @@ class SmartTradingBot:
             response = self.session.post(
                 DHAN_OPTION_CHAIN_URL,
                 json=payload,
-                timeout=15  # Increased timeout
+                timeout=15
             )
+            
+            # Update last call time
+            self.last_option_chain_call = time.time()
             
             logger.debug(f"  Response Status: {response.status_code}")
             
             if response.status_code == 200:
                 result = response.json()
-                logger.debug(f"  Response: {result}")
                 
-                # Check multiple response formats
+                # Per documentation: {"data": {"last_price": ..., "oc": {...}}, "status": "success"}
                 if isinstance(result, dict):
-                    # Format 1: {'status': 'success', 'data': {...}}
                     if result.get('status') == 'success' and result.get('data'):
-                        return result.get('data')
+                        return result['data']
                     
-                    # Format 2: Direct data
+                    # Alternative format (direct data)
                     if result.get('oc') and result.get('last_price'):
                         return result
                     
-                    # Format 3: Error message
+                    # Error case
                     if result.get('status') == 'failure':
                         logger.debug(f"  API Error: {result.get('remarks', 'Unknown')}")
                         return None
                 
+                logger.debug(f"  Unexpected response format")
                 return None
             else:
-                logger.debug(f"  HTTP Error: {response.status_code} - {response.text[:200]}")
+                logger.debug(f"  HTTP Error: {response.status_code}")
                 return None
             
         except Exception as e:
-            logger.debug(f"  Option chain exception: {e}")
-            import traceback
-            logger.debug(traceback.format_exc())
+            logger.debug(f"  Exception: {e}")
             return None
     
     def get_nearest_expiry(self, security_id, segment):
-        """Get nearest expiry - FIX: Correct segment"""
+        """Get nearest expiry - FIXED per Dhan documentation"""
         try:
+            # FIX: UnderlyingScrip must be INTEGER (not string)
             # FIX: Use NSE_FO for stocks
             api_segment = "IDX_I" if segment == "IDX_I" else "NSE_FO"
             
             payload = {
-                "UnderlyingScrip": str(security_id),
+                "UnderlyingScrip": int(security_id),  # 🔥 MUST BE INTEGER!
                 "UnderlyingSeg": api_segment
             }
+            
+            # Detailed logging
+            logger.info(f"  📤 Expiry API Request:")
+            logger.info(f"     Payload: {payload}")
             
             response = self.session.post(
                 DHAN_EXPIRY_LIST_URL,
@@ -263,31 +353,32 @@ class SmartTradingBot:
                 timeout=10
             )
             
+            logger.info(f"  📥 Status: {response.status_code}")
+            
             if response.status_code == 200:
                 data = response.json()
-                logger.debug(f"  Expiry Response: {data}")
+                logger.info(f"  📊 Response: {json.dumps(data, indent=2)[:300]}")
                 
-                # Handle multiple formats
-                expiry_list = None
+                # Per documentation: {"data": ["2024-10-17", ...], "status": "success"}
+                if isinstance(data, dict):
+                    if data.get('status') == 'success' and isinstance(data.get('data'), list):
+                        expiry_list = data['data']
+                        if expiry_list and len(expiry_list) > 0:
+                            logger.info(f"  ✅ Found {len(expiry_list)} expiries")
+                            logger.info(f"  ✅ Nearest: {expiry_list[0]}")
+                            return expiry_list[0]
                 
-                if isinstance(data, dict) and data.get('status') == 'success':
-                    expiry_list = data.get('data', [])
-                elif isinstance(data, dict):
-                    expiry_list = data.get('data', [])
-                elif isinstance(data, list):
-                    expiry_list = data
-                
-                if expiry_list and len(expiry_list) > 0:
-                    return expiry_list[0]
-                
-                logger.debug(f"  No valid expiry found")
+                logger.warning(f"  ⚠️ Unexpected response format")
                 return None
             else:
-                logger.debug(f"  Expiry API Error: {response.status_code}")
+                logger.error(f"  ❌ HTTP Error: {response.status_code}")
+                logger.error(f"     Body: {response.text[:200]}")
                 return None
             
         except Exception as e:
-            logger.debug(f"  Expiry exception: {e}")
+            logger.error(f"  ❌ Exception: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return None
     
     def filter_atm_strikes(self, oc_data, spot_price):
@@ -837,11 +928,12 @@ PCR: {ai_data['oi_data']['pcr']}
         
         # Symbol batches
         all_symbols = list(STOCKS_INDICES.keys())
-        batch_size = 5  # Reduced for better reliability
+        batch_size = 3  # 🔥 Reduced to 3 due to rate limiting (1 req per 3 sec)
         batches = [all_symbols[i:i+batch_size] 
                   for i in range(0, len(all_symbols), batch_size)]
         
         logger.info(f"📊 Tracking {len(all_symbols)} symbols in {len(batches)} batches")
+        logger.info(f"⚡ Rate limit: 1 option chain request per 3 seconds")
         
         while self.running:
             try:
@@ -972,6 +1064,19 @@ if __name__ == "__main__":
         logger.info("✅ All environment variables found!")
         
         bot = SmartTradingBot()
+        
+        # 🔥 RUN API TEST FIRST
+        bot.test_api_connection()
+        
+        # Ask user to continue
+        logger.info("\n" + "="*80)
+        logger.info("⚠️  Check the API test results above")
+        logger.info("Press CTRL+C to stop, or wait 10 seconds to continue...")
+        logger.info("="*80 + "\n")
+        
+        import time
+        time.sleep(10)
+        
         asyncio.run(bot.run())
         
     except Exception as e:
