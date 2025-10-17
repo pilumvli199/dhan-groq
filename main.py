@@ -33,25 +33,23 @@ DHAN_EXPIRY_LIST_URL = f"{DHAN_API_BASE}/v2/optionchain/expirylist"
 DHAN_INTRADAY_URL = f"{DHAN_API_BASE}/v2/charts/intraday"
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 
-# ALL STOCKS LIST (Extended)
+# ALL STOCKS LIST (Only Options-Enabled)
 STOCKS_INDICES = {
-    # Indices
+    # Indices (सर्व indices वर options असतात)
     "NIFTY 50": {"symbol": "NIFTY 50", "segment": "IDX_I", "security_id": 13},
     "NIFTY BANK": {"symbol": "NIFTY BANK", "segment": "IDX_I", "security_id": 25},
     "SENSEX": {"symbol": "SENSEX", "segment": "IDX_I", "security_id": 51},
     "FINNIFTY": {"symbol": "FINNIFTY", "segment": "IDX_I", "security_id": 27},
     
-    # Large Cap Stocks
+    # Large Cap Stocks (Options Available - Verified)
     "RELIANCE": {"symbol": "RELIANCE", "segment": "NSE_EQ", "security_id": 2885},
     "TCS": {"symbol": "TCS", "segment": "NSE_EQ", "security_id": 11536},
     "HDFCBANK": {"symbol": "HDFCBANK", "segment": "NSE_EQ", "security_id": 1333},
-    "ICICIBANK": {"symbol": "ICICIBANK", "segment": "NSE_EQ", "security_id": 1330},
-    "BHARTIARTL": {"symbol": "BHARTIARTL", "segment": "NSE_EQ", "security_id": 80},
+    "SBIN": {"symbol": "SBIN", "segment": "NSE_EQ", "security_id": 3045},
+    "BAJFINANCE": {"symbol": "BAJFINANCE", "segment": "NSE_EQ", "security_id": 317},
     "INFY": {"symbol": "INFY", "segment": "NSE_EQ", "security_id": 1594},
     "HINDUNILVR": {"symbol": "HINDUNILVR", "segment": "NSE_EQ", "security_id": 1394},
     "ITC": {"symbol": "ITC", "segment": "NSE_EQ", "security_id": 1660},
-    "SBIN": {"symbol": "SBIN", "segment": "NSE_EQ", "security_id": 3045},
-    "BAJFINANCE": {"symbol": "BAJFINANCE", "segment": "NSE_EQ", "security_id": 317},
     "KOTAKBANK": {"symbol": "KOTAKBANK", "segment": "NSE_EQ", "security_id": 1922},
     "LT": {"symbol": "LT", "segment": "NSE_EQ", "security_id": 2600},
     "AXISBANK": {"symbol": "AXISBANK", "segment": "NSE_EQ", "security_id": 5900},
@@ -63,8 +61,6 @@ STOCKS_INDICES = {
     "TITAN": {"symbol": "TITAN", "segment": "NSE_EQ", "security_id": 3506},
     "SUNPHARMA": {"symbol": "SUNPHARMA", "segment": "NSE_EQ", "security_id": 3351},
     "NTPC": {"symbol": "NTPC", "segment": "NSE_EQ", "security_id": 11630},
-    "NESTLEIND": {"symbol": "NESTLEIND", "segment": "NSE_EQ", "security_id": 17963},
-    "POWERGRID": {"symbol": "POWERGRID", "segment": "NSE_EQ", "security_id": 2752},
     "TATAMOTORS": {"symbol": "TATAMOTORS", "segment": "NSE_EQ", "security_id": 3456},
     "TATASTEEL": {"symbol": "TATASTEEL", "segment": "NSE_EQ", "security_id": 3499},
     "M&M": {"symbol": "M&M", "segment": "NSE_EQ", "security_id": 2031},
@@ -72,33 +68,16 @@ STOCKS_INDICES = {
     "HINDALCO": {"symbol": "HINDALCO", "segment": "NSE_EQ", "security_id": 1363},
     "COALINDIA": {"symbol": "COALINDIA", "segment": "NSE_EQ", "security_id": 5215},
     "ONGC": {"symbol": "ONGC", "segment": "NSE_EQ", "security_id": 2475},
-    "ADANIPORTS": {"symbol": "ADANIPORTS", "segment": "NSE_EQ", "security_id": 15083},
     "TECHM": {"symbol": "TECHM", "segment": "NSE_EQ", "security_id": 13538},
     "DRREDDY": {"symbol": "DRREDDY", "segment": "NSE_EQ", "security_id": 3721},
     "BRITANNIA": {"symbol": "BRITANNIA", "segment": "NSE_EQ", "security_id": 547},
     "EICHERMOT": {"symbol": "EICHERMOT", "segment": "NSE_EQ", "security_id": 910},
     "DIVISLAB": {"symbol": "DIVISLAB", "segment": "NSE_EQ", "security_id": 10940},
-    
-    # Mid Cap Stocks
     "ADANIENT": {"symbol": "ADANIENT", "segment": "NSE_EQ", "security_id": 25},
     "TRENT": {"symbol": "TRENT", "segment": "NSE_EQ", "security_id": 1964},
-    "DMART": {"symbol": "DMART", "segment": "NSE_EQ", "security_id": 14977},
-    "PERSISTENT": {"symbol": "PERSISTENT", "segment": "NSE_EQ", "security_id": 18365},
-    "LTIM": {"symbol": "LTIM", "segment": "NSE_EQ", "security_id": 17818},
-    "LICI": {"symbol": "LICI", "segment": "NSE_EQ", "security_id": 21808},
-    "ZOMATO": {"symbol": "ZOMATO", "segment": "NSE_EQ", "security_id": 14418},
-    "PAYTM": {"symbol": "PAYTM", "segment": "NSE_EQ", "security_id": 13404},
-    "NYKAA": {"symbol": "NYKAA", "segment": "NSE_EQ", "security_id": 20287},
     "BAJAJFINSV": {"symbol": "BAJAJFINSV", "segment": "NSE_EQ", "security_id": 4963},
-    "SHRIRAMFIN": {"symbol": "SHRIRAMFIN", "segment": "NSE_EQ", "security_id": 3153},
-    "SBILIFE": {"symbol": "SBILIFE", "segment": "NSE_EQ", "security_id": 21808},
-    "HDFCLIFE": {"symbol": "HDFCLIFE", "segment": "NSE_EQ", "security_id": 467},
     "VEDL": {"symbol": "VEDL", "segment": "NSE_EQ", "security_id": 3063},
-    "GODREJCP": {"symbol": "GODREJCP", "segment": "NSE_EQ", "security_id": 10099},
-    "INDIGO": {"symbol": "INDIGO", "segment": "NSE_EQ", "security_id": 11195},
     "GRASIM": {"symbol": "GRASIM", "segment": "NSE_EQ", "security_id": 1232},
-    "ADANIGREEN": {"symbol": "ADANIGREEN", "segment": "NSE_EQ", "security_id": 21808},
-    "BAJAJ-AUTO": {"symbol": "BAJAJ-AUTO", "segment": "NSE_EQ", "security_id": 16669},
     "SIEMENS": {"symbol": "SIEMENS", "segment": "NSE_EQ", "security_id": 3150},
 }
 
@@ -158,24 +137,67 @@ class SmartTradingBot:
             if response.status_code == 200:
                 data = response.json()
                 
+                # Debug: Response format check करतो
+                logger.debug(f"{symbol} API Response keys: {list(data.keys())}")
+                
+                # Different possible timestamp fields check करतो
+                timestamp_field = None
+                for field in ['start_Time', 'timestamp', 'time', 'start_time']:
+                    if field in data:
+                        timestamp_field = field
+                        break
+                
+                if not timestamp_field:
+                    logger.warning(f"{symbol}: No timestamp field found. Keys: {list(data.keys())}")
+                    # Timestamp नसेल तर index-based generate करतो
+                    timestamps = [f"{i:04d}" for i in range(len(data.get('open', [])))]
+                else:
+                    timestamps = data[timestamp_field]
+                
+                # Arrays check करतो
+                opens = data.get('open', [])
+                highs = data.get('high', [])
+                lows = data.get('low', [])
+                closes = data.get('close', [])
+                volumes = data.get('volume', [])
+                
+                if not opens:
+                    logger.warning(f"{symbol}: Empty data arrays")
+                    return None
+                
                 candles = []
-                for i in range(len(data.get('open', []))):
-                    candles.append({
-                        'timestamp': data['start_Time'][i],
-                        'open': data['open'][i],
-                        'high': data['high'][i],
-                        'low': data['low'][i],
-                        'close': data['close'][i],
-                        'volume': data['volume'][i]
-                    })
+                length = min(len(opens), len(timestamps))
+                
+                for i in range(length):
+                    try:
+                        candles.append({
+                            'timestamp': timestamps[i] if i < len(timestamps) else f"{i:04d}",
+                            'open': float(opens[i]) if i < len(opens) else 0,
+                            'high': float(highs[i]) if i < len(highs) else 0,
+                            'low': float(lows[i]) if i < len(lows) else 0,
+                            'close': float(closes[i]) if i < len(closes) else 0,
+                            'volume': int(volumes[i]) if i < len(volumes) else 0
+                        })
+                    except (ValueError, TypeError) as e:
+                        logger.debug(f"{symbol}: Skipping candle {i}: {e}")
+                        continue
+                
+                if not candles:
+                    logger.warning(f"{symbol}: No valid candles created")
+                    return None
                 
                 # Last 50 candles return करतो
-                return candles[-50:] if len(candles) > 50 else candles
+                result = candles[-50:] if len(candles) > 50 else candles
+                logger.info(f"{symbol}: Got {len(result)} candles")
+                return result
             
+            logger.warning(f"{symbol}: API returned status {response.status_code}")
             return None
             
         except Exception as e:
             logger.error(f"Error getting candles for {symbol}: {e}")
+            import traceback
+            logger.debug(traceback.format_exc())
             return None
     
     def get_option_chain(self, security_id, segment, expiry):
@@ -728,8 +750,10 @@ Key Changes:
             # Step 1: Expiry घेतो
             expiry = self.get_nearest_expiry(security_id, segment)
             if not expiry:
-                logger.warning(f"{symbol}: No expiry found")
+                logger.warning(f"{symbol}: No expiry found (Options might not be available)")
                 return
+            
+            logger.info(f"{symbol}: Expiry = {expiry}")
             
             # Step 2: Option chain घेतो
             oc_data = self.get_option_chain(security_id, segment, expiry)
@@ -738,17 +762,18 @@ Key Changes:
                 return
             
             spot_price = oc_data.get('last_price', 0)
+            logger.info(f"{symbol}: Spot = ₹{spot_price:,.2f}")
             
             # Step 3: Candles घेतो
             candles = self.get_historical_candles(security_id, segment, symbol)
             if not candles or len(candles) < 20:
-                logger.warning(f"{symbol}: Not enough candles")
+                logger.warning(f"{symbol}: Not enough candles (Got: {len(candles) if candles else 0}, Need: 20)")
                 return
             
             # Step 4: OI changes calculate करतो
             oi_changes = self.calculate_oi_changes(oc_data, symbol)
             if not oi_changes:
-                logger.info(f"{symbol}: First run, no OI changes yet")
+                logger.info(f"{symbol}: First run or no OI changes, saving current data...")
                 return
             
             # Step 5: Bot's Analysis
@@ -758,6 +783,7 @@ Key Changes:
             )
             
             if not bot_analysis:
+                logger.warning(f"{symbol}: Bot analysis failed")
                 return
             
             logger.info(f"{symbol}: Bot Score = {bot_analysis['total_score']}/100")
@@ -767,21 +793,21 @@ Key Changes:
             
             # Step 6: Check if score >= 70
             if not bot_analysis['send_to_ai']:
-                logger.info(f"{symbol}: Score too low, skipping AI verification")
+                logger.info(f"{symbol}: Score too low ({bot_analysis['total_score']}/100), skipping AI")
                 return
             
             # Step 7: Prepare data for AI
-            logger.info(f"{symbol}: Preparing data for AI...")
+            logger.info(f"{symbol}: 🔥 HIGH SCORE! Preparing data for AI...")
             ai_data = self.prepare_ai_data(
                 symbol, spot_price, oi_changes, candles, bot_analysis
             )
             
             # Step 8: AI Verification
-            logger.info(f"{symbol}: Sending to AI for verification...")
+            logger.info(f"{symbol}: 🤖 Sending to DeepSeek AI...")
             ai_response = await self.verify_with_ai(ai_data)
             
             if not ai_response:
-                logger.warning(f"{symbol}: AI verification failed")
+                logger.warning(f"{symbol}: AI verification failed or unavailable")
                 return
             
             logger.info(f"{symbol}: AI Status = {ai_response['status']}")
@@ -794,6 +820,8 @@ Key Changes:
             
         except Exception as e:
             logger.error(f"Error analyzing {symbol}: {e}")
+            import traceback
+            logger.debug(traceback.format_exc())
     
     # ═══════════════════════════════════════════════════════════
     # MAIN RUN LOOP
