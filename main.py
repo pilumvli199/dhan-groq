@@ -761,73 +761,7 @@ Key Changes:
             await self.send_signal(symbol, ai_data, ai_response, bot_analysis)
             
         except Exception as e:
-            logger.debug(f"{symbol}: Error - {e}")ो
-            oc_data = self.get_option_chain(security_id, segment, expiry)
-            if not oc_data:
-                logger.warning(f"{symbol}: No option chain data")
-                return
-            
-            spot_price = oc_data.get('last_price', 0)
-            logger.info(f"{symbol}: Spot = ₹{spot_price:,.2f}")
-            
-            # Step 3: Candles घेतो
-            candles = self.get_historical_candles(security_id, segment, symbol)
-            if not candles or len(candles) < 20:
-                logger.warning(f"{symbol}: Not enough candles (Got: {len(candles) if candles else 0}, Need: 20)")
-                return
-            
-            # Step 4: OI changes calculate करतो
-            oi_changes = self.calculate_oi_changes(oc_data, symbol)
-            if not oi_changes:
-                logger.info(f"{symbol}: First run or no OI changes, saving current data...")
-                return
-            
-            # Step 5: Bot's Analysis
-            logger.info(f"{symbol}: Running bot analysis...")
-            bot_analysis = self.calculate_signal_score(
-                oi_changes, candles, spot_price, oc_data
-            )
-            
-            if not bot_analysis:
-                logger.warning(f"{symbol}: Bot analysis failed")
-                return
-            
-            logger.info(f"{symbol}: Bot Score = {bot_analysis['total_score']}/100")
-            logger.info(f"  ├─ OI Score: {bot_analysis['oi_score']}/50")
-            logger.info(f"  ├─ Chart Score: {bot_analysis['chart_score']}/50")
-            logger.info(f"  └─ Signal: {bot_analysis['signal_type']}")
-            
-            # Step 6: Check if score >= 70
-            if not bot_analysis['send_to_ai']:
-                logger.info(f"{symbol}: Score too low ({bot_analysis['total_score']}/100), skipping AI")
-                return
-            
-            # Step 7: Prepare data for AI
-            logger.info(f"{symbol}: 🔥 HIGH SCORE! Preparing data for AI...")
-            ai_data = self.prepare_ai_data(
-                symbol, spot_price, oi_changes, candles, bot_analysis
-            )
-            
-            # Step 8: AI Verification
-            logger.info(f"{symbol}: 🤖 Sending to DeepSeek AI...")
-            ai_response = await self.verify_with_ai(ai_data)
-            
-            if not ai_response:
-                logger.warning(f"{symbol}: AI verification failed or unavailable")
-                return
-            
-            logger.info(f"{symbol}: AI Status = {ai_response['status']}")
-            logger.info(f"{symbol}: AI Confidence = {ai_response.get('confidence', 0)}%")
-            
-            # Step 9: Send signal to Telegram
-            await self.send_signal(symbol, ai_data, ai_response, bot_analysis)
-            
-            logger.info(f"✅ {symbol}: Complete!")
-            
-        except Exception as e:
-            logger.error(f"Error analyzing {symbol}: {e}")
-            import traceback
-            logger.debug(traceback.format_exc())
+            logger.debug(f"{symbol}: Error - {e}")
     
     # ═══════════════════════════════════════════════════════════
     # MAIN RUN LOOP
