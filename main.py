@@ -28,7 +28,7 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 DHAN_CLIENT_ID = os.getenv("DHAN_CLIENT_ID")
 DHAN_ACCESS_TOKEN = os.getenv("DHAN_ACCESS_TOKEN")
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")  # DeepSeek API key
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 
 # DeepSeek API URL
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
@@ -74,10 +74,6 @@ STOCKS_INDICES = {
     "DMART": {"symbol": "DMART", "segment": "NSE_EQ"},
     "TRENT": {"symbol": "TRENT", "segment": "NSE_EQ"},
 }
-
-# ========================
-# BOT CODE
-# ========================
 
 class DhanOptionChainBot:
     def __init__(self):
@@ -204,7 +200,6 @@ class DhanOptionChainBot:
                             'volume': volumes[i] if i < len(volumes) else 0
                         })
                     
-                    # Last 50 candles return करतो
                     last_candles = candles[-candle_count:] if len(candles) >= candle_count else candles
                     logger.info(f"{symbol}: Returning last {len(last_candles)} candles (5 min)")
                     return last_candles
@@ -361,17 +356,14 @@ class DhanOptionChainBot:
             spot_price = oc_data.get('last_price', 0)
             oc = oc_data.get('oc', {})
             
-            # ATM strike शोधतो
             strikes = sorted([float(s) for s in oc.keys()])
             atm_strike = min(strikes, key=lambda x: abs(x - spot_price))
             
-            # ATM च्या आजूबाजूचे 5 strikes (11 total)
             atm_idx = strikes.index(atm_strike)
             start_idx = max(0, atm_idx - 5)
             end_idx = min(len(strikes), atm_idx + 6)
             selected_strikes = strikes[start_idx:end_idx]
             
-            # Option chain simplified data
             option_data = []
             for strike in selected_strikes:
                 strike_key = f"{strike:.6f}"
@@ -401,7 +393,6 @@ class DhanOptionChainBot:
                     }
                 })
             
-            # Last 50 candles simplified
             candle_data = []
             for c in candles[-50:]:
                 candle_data.append({
@@ -434,7 +425,6 @@ class DhanOptionChainBot:
                 logger.error("DeepSeek API key missing!")
                 return None
             
-            # Prompt तयार करतो
             prompt = f"""You are an expert options trader analyzing Indian stock market data.
 
 Symbol: {analysis_data['symbol']}
@@ -501,9 +491,7 @@ Be strict: Only give BUY signal if confidence > 70%."""
                 result = response.json()
                 content = result['choices'][0]['message']['content']
                 
-                # JSON extract करतो
                 try:
-                    # Find JSON in response
                     start = content.find('{')
                     end = content.rfind('}') + 1
                     if start != -1 and end != 0:
@@ -537,7 +525,6 @@ Be strict: Only give BUY signal if confidence > 70%."""
                 msg += f"💭 Reason: {analysis.get('reasoning', 'Market conditions unclear')}\n"
                 return msg
             
-            # BUY signal
             emoji = "🟢" if signal == "BUY CE" else "🔴"
             
             msg = f"{emoji} *{symbol} - {signal}*\n\n"
@@ -567,7 +554,6 @@ Be strict: Only give BUY signal if confidence > 70%."""
                 security_id = info['security_id']
                 segment = info['segment']
                 
-                # Nearest expiry
                 expiry = self.get_nearest_expiry(security_id, segment)
                 if not expiry:
                     logger.warning(f"{symbol}: Expiry नाही मिळाला")
@@ -575,7 +561,6 @@ Be strict: Only give BUY signal if confidence > 70%."""
                 
                 logger.info(f"Fetching data for {symbol} (Expiry: {expiry})...")
                 
-                # Option chain data
                 oc_data = self.get_option_chain(security_id, segment, expiry)
                 if not oc_data:
                     logger.warning(f"{symbol}: Option chain data नाही मिळाला")
@@ -583,7 +568,6 @@ Be strict: Only give BUY signal if confidence > 70%."""
                 
                 spot_price = oc_data.get('last_price', 0)
                 
-                # Historical candles (last 50)
                 logger.info(f"Fetching last 50 candles for {symbol}...")
                 candles = self.get_historical_data(security_id, segment, symbol, candle_count=50)
                 
@@ -591,10 +575,8 @@ Be strict: Only give BUY signal if confidence > 70%."""
                     logger.warning(f"{symbol}: Insufficient candle data")
                     continue
                 
-                # Chart बनवतो
                 chart_buf = self.create_candlestick_chart(candles, symbol, spot_price)
                 
-                # DeepSeek AI Analysis
                 logger.info(f"🤖 Starting AI analysis for {symbol}...")
                 analysis_input = self.prepare_analysis_data(symbol, candles, oc_data, expiry)
                 
@@ -602,57 +584,14 @@ Be strict: Only give BUY signal if confidence > 70%."""
                     ai_analysis = await self.get_deepseek_analysis(analysis_input)
                     
                     if ai_analysis:
-                        # Chart पाठवतो
                         if chart_buf:
-                            await self.bot.send_message(
-                chat_id=TELEGRAM_CHAT_ID,
-                text=msg,
-                parse_mode='Markdown'
-            )
-            logger.info("Startup message sent")
-        except Exception as e:
-            logger.error(f"Error sending startup message: {e}")
-
-
-# ========================
-# BOT RUN करा
-# ========================
-if __name__ == "__main__":
-    try:
-        # Environment variables check
-        required_vars = {
-            'TELEGRAM_BOT_TOKEN': TELEGRAM_BOT_TOKEN,
-            'TELEGRAM_CHAT_ID': TELEGRAM_CHAT_ID,
-            'DHAN_CLIENT_ID': DHAN_CLIENT_ID,
-            'DHAN_ACCESS_TOKEN': DHAN_ACCESS_TOKEN,
-            'DEEPSEEK_API_KEY': DEEPSEEK_API_KEY
-        }
-        
-        missing_vars = [k for k, v in required_vars.items() if not v]
-        
-        if missing_vars:
-            logger.error(f"❌ Missing environment variables: {', '.join(missing_vars)}")
-            logger.error("Please set all required variables:")
-            logger.error("  - TELEGRAM_BOT_TOKEN")
-            logger.error("  - TELEGRAM_CHAT_ID")
-            logger.error("  - DHAN_CLIENT_ID")
-            logger.error("  - DHAN_ACCESS_TOKEN")
-            logger.error("  - DEEPSEEK_API_KEY")
-            exit(1)
-        
-        logger.info("🚀 Starting Dhan Option Chain Bot with DeepSeek AI...")
-        bot = DhanOptionChainBot()
-        asyncio.run(bot.run())
-    except Exception as e:
-        logger.error(f"Fatal error: {e}")
-        exit(1).send_photo(
+                            await self.bot.send_photo(
                                 chat_id=TELEGRAM_CHAT_ID,
                                 photo=chart_buf,
                                 caption=f"📊 {symbol} - Last {len(candles)} Candles"
                             )
                             await asyncio.sleep(1)
                         
-                        # AI Signal पाठवतो
                         signal_msg = self.format_signal_message(symbol, ai_analysis)
                         if signal_msg:
                             await self.bot.send_message(
@@ -666,7 +605,6 @@ if __name__ == "__main__":
                 else:
                     logger.warning(f"{symbol}: Analysis data preparation failed")
                 
-                # Rate limit
                 await asyncio.sleep(5)
                 
             except Exception as e:
@@ -734,4 +672,41 @@ if __name__ == "__main__":
             msg += "🚂 Deployed on Railway.app\n\n"
             msg += "_Market Hours: 9:15 AM - 3:30 PM (Mon-Fri)_"
             
-            await self.bot
+            await self.bot.send_message(
+                chat_id=TELEGRAM_CHAT_ID,
+                text=msg,
+                parse_mode='Markdown'
+            )
+            logger.info("Startup message sent")
+        except Exception as e:
+            logger.error(f"Error sending startup message: {e}")
+
+
+if __name__ == "__main__":
+    try:
+        required_vars = {
+            'TELEGRAM_BOT_TOKEN': TELEGRAM_BOT_TOKEN,
+            'TELEGRAM_CHAT_ID': TELEGRAM_CHAT_ID,
+            'DHAN_CLIENT_ID': DHAN_CLIENT_ID,
+            'DHAN_ACCESS_TOKEN': DHAN_ACCESS_TOKEN,
+            'DEEPSEEK_API_KEY': DEEPSEEK_API_KEY
+        }
+        
+        missing_vars = [k for k, v in required_vars.items() if not v]
+        
+        if missing_vars:
+            logger.error(f"❌ Missing environment variables: {', '.join(missing_vars)}")
+            logger.error("Please set all required variables:")
+            logger.error("  - TELEGRAM_BOT_TOKEN")
+            logger.error("  - TELEGRAM_CHAT_ID")
+            logger.error("  - DHAN_CLIENT_ID")
+            logger.error("  - DHAN_ACCESS_TOKEN")
+            logger.error("  - DEEPSEEK_API_KEY")
+            exit(1)
+        
+        logger.info("🚀 Starting Dhan Option Chain Bot with DeepSeek AI...")
+        bot = DhanOptionChainBot()
+        asyncio.run(bot.run())
+    except Exception as e:
+        logger.error(f"Fatal error: {e}")
+        exit(1)
