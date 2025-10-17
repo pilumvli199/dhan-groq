@@ -425,44 +425,94 @@ class DhanOptionChainBot:
                 logger.error("DeepSeek API key missing!")
                 return None
             
-            prompt = f"""You are an expert options trader analyzing Indian stock market data.
+            prompt = f"""You are a PROFESSIONAL INTRADAY OPTIONS TRADER with 15+ years experience in Indian markets. You use PURE PRICE ACTION + OPTIONS DATA analysis.
 
+CURRENT MARKET DATA:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Symbol: {analysis_data['symbol']}
 Spot Price: ₹{analysis_data['spot_price']:,.2f}
 ATM Strike: ₹{analysis_data['atm_strike']:,.0f}
 Expiry: {analysis_data['expiry']}
 
-CANDLESTICK DATA (Last 50 5-min candles):
-{json.dumps(analysis_data['candles'], indent=2)}
+CANDLESTICK DATA (Last 50 × 5-min candles):
+{json.dumps(analysis_data['candles'][-20:], indent=2)}
 
-OPTION CHAIN DATA (ATM ± 5 strikes):
+OPTION CHAIN DATA (ATM ± 5 strikes with Greeks & OI):
 {json.dumps(analysis_data['option_chain'], indent=2)}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Task: Analyze the data and provide ONLY ONE clear trading signal:
-1. BUY CE (Call Option) - if bullish setup
-2. BUY PE (Put Option) - if bearish setup
-3. NO TRADE - if no clear signal
+CRITICAL INSTRUCTIONS:
+======================
 
-Your response MUST be in this EXACT JSON format:
+1. **PURE PRICE ACTION ANALYSIS:**
+   - Identify CLEAR candlestick patterns (Engulfing, Doji, Hammer, Shooting Star, etc.)
+   - Check trend: Higher Highs/Higher Lows (Bullish) OR Lower Highs/Lower Lows (Bearish)
+   - Identify Support/Resistance breaks or bounces
+   - Analyze volume confirmation (increasing volume = stronger move)
+   - Look for consolidation breakouts
+
+2. **OPTION CHAIN ANALYSIS:**
+   - **Call Writing (CE sell):** High CE OI buildup = Resistance, Bearish
+   - **Put Writing (PE sell):** High PE OI buildup = Support, Bullish
+   - **OI Unwinding:** Decreasing OI + Price rise = Short covering (Bullish)
+   - **IV Analysis:** High IV = Premium expensive, Low IV = Cheap premium
+   - **Delta Analysis:** CE Delta ~0.5 (ATM) best for directional trades
+   - **Volume Surge:** Sudden volume in CE/PE indicates institutional interest
+
+3. **SIGNAL RULES (BE VERY STRICT):**
+   ❌ **DO NOT give signal if:**
+   - Market is sideways/choppy (no clear trend)
+   - Candlestick patterns are weak or conflicting
+   - OI data is confusing (both CE & PE buildup)
+   - Volume is low (no conviction)
+   - IV is too high (premium overpriced)
+   - Price near ATM with no clear direction
+   - Confidence < 75%
+
+   ✅ **ONLY give BUY signal if ALL conditions met:**
+   - **For BUY CE (Calls):**
+     * Strong bullish candlestick pattern (Engulfing/Hammer at support)
+     * Clear uptrend with higher highs
+     * Volume increasing on green candles
+     * PE OI buildup (indicating support/bullish sentiment)
+     * Price breaking above resistance
+     * Delta positive, IV reasonable
+     * Confidence ≥ 75%
+   
+   - **For BUY PE (Puts):**
+     * Strong bearish candlestick pattern (Shooting Star/Evening Star at resistance)
+     * Clear downtrend with lower lows
+     * Volume increasing on red candles
+     * CE OI buildup (indicating resistance/bearish sentiment)
+     * Price breaking below support
+     * Delta negative, IV reasonable
+     * Confidence ≥ 75%
+
+4. **RESPONSE FORMAT (STRICT JSON):**
+
+If NO clear opportunity:
 {{
-  "signal": "BUY CE" or "BUY PE" or "NO TRADE",
-  "strike": <recommended strike price>,
-  "entry_price": <option premium to enter>,
-  "target": <profit target premium>,
-  "stoploss": <stoploss premium>,
+  "signal": "NO TRADE",
   "confidence": <0-100>,
-  "reasoning": "<brief 2-3 line explanation>"
+  "reasoning": "Specific reason why no trade (e.g., 'Sideways market, no clear pattern', 'OI data conflicting', 'Low volume, weak setup')"
 }}
 
-Consider:
-- Candlestick patterns (bullish/bearish)
-- Support/Resistance levels
-- Volume trends
-- OI data (buildup/unwinding)
-- IV levels
-- Greeks (Delta, Theta)
+If CLEAR opportunity exists:
+{{
+  "signal": "BUY CE" or "BUY PE",
+  "strike": <ATM or slightly OTM strike>,
+  "entry_price": <current option LTP>,
+  "target": <realistic target based on risk-reward 1:2>,
+  "stoploss": <strict SL to limit loss>,
+  "confidence": <75-95>,
+  "reasoning": "<Explain: 1) Price action pattern, 2) OI/Volume confirmation, 3) Support/Resistance level>"
+}}
 
-Be strict: Only give BUY signal if confidence > 70%."""
+**REMEMBER:** 
+- Quality > Quantity. Better to skip 10 trades than take 1 bad trade.
+- Only high-probability setups with clear price action + option confirmation.
+- If in doubt, always say NO TRADE.
+- Real money is at risk - be professional and conservative."""
 
             headers = {
                 'Authorization': f'Bearer {DEEPSEEK_API_KEY}',
@@ -472,10 +522,11 @@ Be strict: Only give BUY signal if confidence > 70%."""
             payload = {
                 'model': 'deepseek-chat',
                 'messages': [
+                    {'role': 'system', 'content': 'You are a professional options trader who only takes high-probability trades with clear price action and options data confirmation. You are conservative and skip trades when setup is not clear.'},
                     {'role': 'user', 'content': prompt}
                 ],
-                'temperature': 0.3,
-                'max_tokens': 500
+                'temperature': 0.1,  # Very low temperature for consistent, strict analysis
+                'max_tokens': 600
             }
             
             logger.info(f"Calling DeepSeek API for {analysis_data['symbol']}...")
@@ -497,7 +548,20 @@ Be strict: Only give BUY signal if confidence > 70%."""
                     if start != -1 and end != 0:
                         json_str = content[start:end]
                         analysis = json.loads(json_str)
-                        logger.info(f"✅ DeepSeek analysis received for {analysis_data['symbol']}")
+                        
+                        # Extra validation: फक्त high confidence signals पाठवतो
+                        signal = analysis.get('signal', 'NO TRADE')
+                        confidence = analysis.get('confidence', 0)
+                        
+                        if signal != 'NO TRADE' and confidence < 75:
+                            logger.info(f"⚠️ {analysis_data['symbol']}: Signal rejected - Low confidence ({confidence}%)")
+                            return {
+                                'signal': 'NO TRADE',
+                                'confidence': confidence,
+                                'reasoning': f'Confidence too low ({confidence}%). Need ≥75% for signal.'
+                            }
+                        
+                        logger.info(f"✅ DeepSeek analysis: {signal} (Confidence: {confidence}%)")
                         return analysis
                     else:
                         logger.warning("No JSON found in DeepSeek response")
@@ -575,36 +639,51 @@ Be strict: Only give BUY signal if confidence > 70%."""
                     logger.warning(f"{symbol}: Insufficient candle data")
                     continue
                 
-                chart_buf = self.create_candlestick_chart(candles, symbol, spot_price)
-                
-                logger.info(f"🤖 Starting AI analysis for {symbol}...")
+                logger.info(f"🤖 Starting STRICT AI analysis for {symbol}...")
                 analysis_input = self.prepare_analysis_data(symbol, candles, oc_data, expiry)
                 
                 if analysis_input:
                     ai_analysis = await self.get_deepseek_analysis(analysis_input)
                     
                     if ai_analysis:
-                        if chart_buf:
-                            await self.bot.send_photo(
-                                chat_id=TELEGRAM_CHAT_ID,
-                                photo=chart_buf,
-                                caption=f"📊 {symbol} - Last {len(candles)} Candles"
-                            )
-                            await asyncio.sleep(1)
+                        signal = ai_analysis.get('signal', 'NO TRADE')
+                        confidence = ai_analysis.get('confidence', 0)
                         
-                        signal_msg = self.format_signal_message(symbol, ai_analysis)
-                        if signal_msg:
-                            await self.bot.send_message(
-                                chat_id=TELEGRAM_CHAT_ID,
-                                text=signal_msg,
-                                parse_mode='Markdown'
-                            )
-                            logger.info(f"✅ {symbol} AI signal sent: {ai_analysis.get('signal')}")
+                        # फक्त BUY signals साठी chart + message पाठवतो
+                        # NO TRADE ला SKIP करतो (फक्त log मध्ये दाखवतो)
+                        if signal in ['BUY CE', 'BUY PE']:
+                            logger.info(f"🎯 {symbol}: Valid signal detected - {signal} ({confidence}%)")
+                            
+                            # Chart बनवतो आणि पाठवतो
+                            chart_buf = self.create_candlestick_chart(candles, symbol, spot_price)
+                            if chart_buf:
+                                await self.bot.send_photo(
+                                    chat_id=TELEGRAM_CHAT_ID,
+                                    photo=chart_buf,
+                                    caption=f"📊 {symbol} - Last {len(candles)} Candles"
+                                )
+                                await asyncio.sleep(1)
+                            
+                            # Signal message पाठवतो
+                            signal_msg = self.format_signal_message(symbol, ai_analysis)
+                            if signal_msg:
+                                await self.bot.send_message(
+                                    chat_id=TELEGRAM_CHAT_ID,
+                                    text=signal_msg,
+                                    parse_mode='Markdown'
+                                )
+                                logger.info(f"✅ {symbol} AI signal sent to Telegram: {signal}")
+                        else:
+                            # NO TRADE - फक्त log, Telegram वर काहीच नाही
+                            reason = ai_analysis.get('reasoning', 'No clear setup')
+                            logger.info(f"⚪️ {symbol}: NO TRADE - {reason} (Confidence: {confidence}%)")
+                            logger.info(f"   → Skipping Telegram message for {symbol}")
                     else:
                         logger.warning(f"{symbol}: AI analysis failed")
                 else:
                     logger.warning(f"{symbol}: Analysis data preparation failed")
                 
+                # Rate limit
                 await asyncio.sleep(5)
                 
             except Exception as e:
