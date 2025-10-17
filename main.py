@@ -8,6 +8,7 @@ import json
 import redis
 from collections import defaultdict
 import numpy as np
+import pytz  # For timezone handling
 
 # Logging setup (INFO level for detailed analysis logs)
 logging.basicConfig(
@@ -18,6 +19,9 @@ logger = logging.getLogger(__name__)
 
 # Suppress httpx logs (too verbose)
 logging.getLogger("httpx").setLevel(logging.WARNING)
+
+# Indian timezone
+IST = pytz.timezone('Asia/Kolkata')
 
 # ========================
 # CONFIGURATION
@@ -127,6 +131,20 @@ class SmartTradingBot:
         logger.info("Bot initialized successfully")
     
     # ═══════════════════════════════════════════════════════════
+    # TIMEZONE HELPERS
+    # ═══════════════════════════════════════════════════════════
+    
+    def get_ist_time(self):
+        """Current Indian time घेतो"""
+        return datetime.now(IST)
+    
+    def format_ist_time(self, dt=None):
+        """IST time format करतो"""
+        if dt is None:
+            dt = self.get_ist_time()
+        return dt.strftime('%Y-%m-%d %H:%M:%S IST')
+    
+    # ═══════════════════════════════════════════════════════════
     # DATA FETCHING METHODS
     # ═══════════════════════════════════════════════════════════
     
@@ -136,7 +154,7 @@ class SmartTradingBot:
             exch_seg = "IDX_I" if segment == "IDX_I" else "NSE_EQ"
             instrument = "INDEX" if segment == "IDX_I" else "EQUITY"
             
-            to_date = datetime.now()
+            to_date = self.get_ist_time()
             from_date = to_date - timedelta(days=7)
             
             payload = {
@@ -226,16 +244,25 @@ class SmartTradingBot:
             )
             
             if response.status_code == 200:
-                return response.json().get('data')
+                result = response.json()
+                
+                # Check if response has data
+                if result.get('status') == 'success' and result.get('data'):
+                    return result.get('data')
+                else:
+                    logger.debug(f"  Option chain error: {result.get('remarks', 'No data')}")
+                    return None
+            else:
+                logger.debug(f"  Option chain HTTP error: {response.status_code}")
             
             return None
             
         except Exception as e:
-            logger.debug(f"Option chain error: {e}")
+            logger.debug(f"  Option chain exception: {e}")
             return None
     
     def get_nearest_expiry(self, security_id, segment):
-        """सर्वात जवळचा expiry काढतो"""
+        """सर्वात जवळचा expiry काढतो (AUTO SELECTION)"""
         try:
             payload = {
                 "UnderlyingScrip": security_id,
@@ -246,36 +273,77 @@ class SmartTradingBot:
             response = self.session.post(
                 DHAN_EXPIRY_LIST_URL,
                 json=payload,
-                timeout=8  # Reduced from 10
+                timeout=8
             )
             
             if response.status_code == 200:
                 data = response.json()
-                if data.get('status') == 'success' and data.get('data'):
-                    return data['data'][0]
-            
-            return None
+                
+                # Debug: Response format check करतो
+                logger.debug(f"  Expiry API Response: {data}")
+                
+                # Multiple formats handle करतो
+                expiry_list = None
+                
+                # Format 1: {'status': 'success', 'data': ['2025-10-17', '2025-10-24']}
+                if isinstance(data, dict) and data.get('status') == 'success':
+                    if isinstance(data.get('data'), list) and len(data['data']) > 0:
+                        expiry_list = data['data']
+                
+                # Format 2: {'data': ['2025-10-17', '2025-10-24']}
+                elif isinstance(data, dict) and isinstance(data.get('data'), list):
+                    expiry_list = data['data']
+                
+                # Format 3: ['2025-10-17', '2025-10-24']
+                elif isinstance(data, list):
+                    expiry_list = data
+                
+                if expiry_list and len(expiry_list) > 0:
+                    nearest_expiry = expiry_list[0]
+                    logger.debug(f"  Available expiries: {expiry_list[:3]}")  # First 3
+                    logger.debug(f"  Selected (nearest): {nearest_expiry}")
+                    return nearest_expiry
+                else:
+                    logger.warning(f"  No expiry list found in response")
+                    return None
+            else:
+                logger.debug(f"  Expiry API HTTP error: {response.status_code}")
+                return None
             
         except Exception as e:
-            logger.debug(f"Expiry error: {e}")
+            logger.debug(f"  Expiry API exception: {e}")
+            import traceback
+            logger.debug(traceback.format_exc())
             return None
+    
+    # ═══════════════════════════════════════════════════════════
+    # ATM STRIKE FILTERING
+    # ═══════════════════════════════════════════════════════════
     
     def filter_atm_strikes(self, oc_data, spot_price):
         """ATM च्या आसपास फक्त ±5 strikes filter करतो (11 strikes total)"""
         try:
             all_strikes = oc_data.get('oc', {})
             if not all_strikes:
+                logger.warning("  ⚠️ No strikes found in option chain")
                 return {}
             
-            # सगळे strikes numeric format मध्ये घेतो
+            # सगळे strikes numeric format मध्ये घेतो (handle both int and float keys)
+            strike_map = {}  # float_strike -> original_key mapping
             strike_prices = []
-            for strike in all_strikes.keys():
+            
+            for strike_key in all_strikes.keys():
                 try:
-                    strike_prices.append(float(strike))
+                    # Try converting strike key to float
+                    strike_float = float(strike_key)
+                    strike_prices.append(strike_float)
+                    strike_map[strike_float] = strike_key
                 except:
+                    logger.debug(f"  Skipping invalid strike: {strike_key}")
                     continue
             
             if not strike_prices:
+                logger.warning("  ⚠️ No valid strike prices found")
                 return {}
             
             strike_prices.sort()
@@ -290,26 +358,33 @@ class SmartTradingBot:
             
             filtered_strikes = strike_prices[start_idx:end_idx]
             
-            # Filtered option chain तयार करतो
+            # Filtered option chain तयार करतो (using original keys)
             filtered_oc = {
                 'last_price': oc_data.get('last_price'),
                 'oc': {}
             }
             
-            for strike in filtered_strikes:
-                strike_key = str(int(strike))
-                if strike_key in all_strikes:
-                    filtered_oc['oc'][strike_key] = all_strikes[strike_key]
+            for strike_float in filtered_strikes:
+                original_key = strike_map.get(strike_float)
+                if original_key and original_key in all_strikes:
+                    filtered_oc['oc'][original_key] = all_strikes[original_key]
             
-            logger.info(f"  ├─ ATM Strike: {atm_strike:.0f}")
+            logger.info(f"  ├─ ATM Strike: ₹{atm_strike:.0f}")
             logger.info(f"  ├─ Filtered: {len(filtered_oc['oc'])} strikes (ATM ±5)")
-            logger.info(f"  └─ Range: {min(filtered_strikes):.0f} to {max(filtered_strikes):.0f}")
+            if filtered_strikes:
+                logger.info(f"  └─ Range: ₹{min(filtered_strikes):.0f} to ₹{max(filtered_strikes):.0f}")
             
             return filtered_oc
             
         except Exception as e:
-            logger.error(f"Error filtering ATM strikes: {e}")
+            logger.error(f"  ❌ Error filtering ATM strikes: {e}")
+            import traceback
+            logger.debug(traceback.format_exc())
             return oc_data  # Return original data if filtering fails
+    
+    # ═══════════════════════════════════════════════════════════
+    # BOT'S OWN ANALYSIS ENGINE
+    # ═══════════════════════════════════════════════════════════
     
     def calculate_oi_changes(self, current_oc, symbol):
         """OI changes calculate करतो (previous vs current)"""
@@ -583,7 +658,7 @@ class SmartTradingBot:
         
         return {
             'symbol': symbol,
-            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'timestamp': self.format_ist_time(),
             'spot_price': round(spot, 2),
             'bot_analysis': {
                 'signal': bot_analysis['signal_type'],
@@ -750,7 +825,7 @@ Key Changes:
             return
         
         try:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            timestamp = self.get_ist_time().strftime("%Y%m%d_%H%M%S")
             signal_key = f"signal:{symbol}:{timestamp}"
             
             signal_data = {
@@ -785,16 +860,16 @@ Key Changes:
             segment = info['segment']
             
             logger.info(f"\n{'─'*60}")
-            logger.info(f"🔍 Analyzing: {symbol}")
+            logger.info(f"🔍 Analyzing: {symbol} | {self.format_ist_time()}")
             logger.info(f"{'─'*60}")
             
-            # Step 1: Expiry घेतो
+            # Step 1: Expiry घेतो (AUTO NEAREST)
             expiry = self.get_nearest_expiry(security_id, segment)
             if not expiry:
-                logger.warning(f"  ❌ {symbol}: No expiry found")
+                logger.warning(f"  ❌ {symbol}: No expiry available")
                 return
             
-            logger.info(f"  ✅ Expiry: {expiry}")
+            logger.info(f"  ✅ Nearest Expiry (AUTO): {expiry}")
             
             # Step 2: Option chain घेतो
             oc_data = self.get_option_chain(security_id, segment, expiry)
@@ -929,20 +1004,20 @@ Key Changes:
         
         while self.running:
             try:
-                cycle_start = datetime.now()
+                cycle_start = self.get_ist_time()
                 logger.info(f"\n{'#'*80}")
-                logger.info(f"CYCLE START: {cycle_start.strftime('%Y-%m-%d %H:%M:%S')}")
+                logger.info(f"CYCLE START: {self.format_ist_time(cycle_start)}")
                 logger.info(f"{'#'*80}\n")
                 
                 # Process each batch (PARALLEL!)
                 for batch_num, batch in enumerate(batches, 1):
-                    batch_start = datetime.now()
+                    batch_start = self.get_ist_time()
                     logger.info(f"\n📦 Batch {batch_num}/{len(batches)}: {batch}")
                     
                     # PARALLEL PROCESSING! 🚀
                     await self.analyze_batch_parallel(batch)
                     
-                    batch_duration = (datetime.now() - batch_start).total_seconds()
+                    batch_duration = (self.get_ist_time() - batch_start).total_seconds()
                     logger.info(f"✅ Batch {batch_num} completed in {batch_duration:.1f}s")
                     
                     # Minimal wait between batches (Dhan rate limit protection)
@@ -950,7 +1025,7 @@ Key Changes:
                         logger.info(f"⏸️ Waiting 3 seconds before next batch...")
                         await asyncio.sleep(3)  # Reduced from 5 to 3
                 
-                cycle_end = datetime.now()
+                cycle_end = self.get_ist_time()
                 duration = (cycle_end - cycle_start).total_seconds()
                 
                 # Dynamic sleep calculation
@@ -961,7 +1036,8 @@ Key Changes:
                 logger.info(f"CYCLE COMPLETE!")
                 logger.info(f"├─ Duration: {duration:.1f}s / {target_cycle}s")
                 logger.info(f"├─ Sleeping: {sleep_time:.0f}s")
-                logger.info(f"└─ Next cycle: {(datetime.now() + timedelta(seconds=sleep_time)).strftime('%H:%M:%S')}")
+                next_cycle_time = self.get_ist_time() + timedelta(seconds=sleep_time)
+                logger.info(f"└─ Next cycle: {next_cycle_time.strftime('%I:%M:%S %p IST')}")
                 logger.info(f"{'#'*80}\n")
                 
                 await asyncio.sleep(sleep_time)
@@ -984,9 +1060,10 @@ Key Changes:
 
 ✅ Bot's Own Analysis Engine
   ├─ OI Analysis (PCR, Changes)
-  ├─ Chart Patterns
+  ├─ Chart Patterns (50×5min candles)
   ├─ Volume Analysis
-  └─ Support/Resistance
+  ├─ Support/Resistance
+  └─ ATM ±5 Strikes (11 total)
 
 ✅ AI Verification (DeepSeek)
   ├─ Only High-Score Signals
@@ -994,6 +1071,7 @@ Key Changes:
 
 ✅ Smart Filtering
   ├─ Score >= 70/100
+  ├─ Auto Nearest Expiry
   └─ AI Confirms
 
 ━━━━━━━━━━━━━━━━━━━━
@@ -1002,7 +1080,8 @@ Key Changes:
 
 Symbols: """ + str(len(STOCKS_INDICES)) + """
 Update: Every 5 minutes
-Batches: """ + str((len(STOCKS_INDICES) + 4) // 5) + """
+Batches: """ + str((len(STOCKS_INDICES) + 9) // 10) + """
+Timezone: IST (Indian Time)
 
 ━━━━━━━━━━━━━━━━━━━━
 ⚡ POWERED BY
