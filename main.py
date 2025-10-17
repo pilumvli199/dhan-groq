@@ -216,8 +216,8 @@ class SmartTradingBot:
     def get_historical_candles(self, security_id, segment, symbol):
         """Last 50 x 5-minute candles"""
         try:
-            # FIX: Use correct segment for API
-            exch_seg = "IDX_I" if segment == "IDX_I" else "NSE_FO"
+            # FIX: Always use NSE_EQ for stocks' candle data
+            exch_seg = "IDX_I" if segment == "IDX_I" else "NSE_EQ"
             instrument = "INDEX" if segment == "IDX_I" else "EQUITY"
             
             to_date = self.get_ist_time()
@@ -290,7 +290,7 @@ class SmartTradingBot:
             return None
     
     def get_option_chain(self, security_id, segment, expiry):
-        """Option chain data - FIXED per Dhan documentation"""
+        """Option chain data - FIXED: Use NSE_EQ for stocks"""
         try:
             # 🔥 RATE LIMITING: Wait if needed (1 request per 3 seconds)
             import time
@@ -302,11 +302,11 @@ class SmartTradingBot:
                 logger.debug(f"  ⏱️ Rate limit: sleeping {sleep_time:.1f}s")
                 time.sleep(sleep_time)
             
-            # FIX: Use NSE_FO for stocks, IDX_I for indices
-            api_segment = "IDX_I" if segment == "IDX_I" else "NSE_FO"
+            # 🔥 CRITICAL FIX: Always use NSE_EQ for stocks' option chains!
+            api_segment = "IDX_I" if segment == "IDX_I" else "NSE_EQ"
             
             payload = {
-                "UnderlyingScrip": int(security_id),  # 🔥 MUST BE INTEGER!
+                "UnderlyingScrip": int(security_id),  # Must be integer
                 "UnderlyingSeg": api_segment,
                 "Expiry": expiry
             }
@@ -352,19 +352,17 @@ class SmartTradingBot:
             return None
     
     def get_nearest_expiry(self, security_id, segment):
-        """Get nearest expiry - FIXED: Use NSE_EQ for option chain"""
+        """Get nearest expiry - WORKING FORMAT from your other bot"""
         try:
-            # 🔥 CRITICAL FIX: Option chain API always uses NSE_EQ for stocks!
-            # Only indices use IDX_I
+            # 🔥 WORKING FORMAT: Always use NSE_EQ for stocks
             api_segment = "IDX_I" if segment == "IDX_I" else "NSE_EQ"
             
             payload = {
-                "UnderlyingScrip": int(security_id),  # Must be integer
+                "UnderlyingScrip": int(security_id),  # Integer
                 "UnderlyingSeg": api_segment
             }
             
-            logger.info(f"  📤 Expiry API Request:")
-            logger.info(f"     Payload: {payload}")
+            logger.info(f"  📤 Expiry Request: {payload}")
             
             response = self.session.post(
                 DHAN_EXPIRY_LIST_URL,
@@ -376,28 +374,23 @@ class SmartTradingBot:
             
             if response.status_code == 200:
                 data = response.json()
-                logger.info(f"  📊 Response: {json.dumps(data, indent=2)[:300]}")
                 
-                # Per documentation: {"data": ["2024-10-17", ...], "status": "success"}
-                if isinstance(data, dict):
-                    if data.get('status') == 'success' and isinstance(data.get('data'), list):
-                        expiry_list = data['data']
-                        if expiry_list and len(expiry_list) > 0:
-                            logger.info(f"  ✅ Found {len(expiry_list)} expiries")
-                            logger.info(f"  ✅ Nearest: {expiry_list[0]}")
-                            return expiry_list[0]
+                # Response format: {"data": ["2025-10-20", ...], "status": "success"}
+                if data.get('status') == 'success' and data.get('data'):
+                    expiries = data['data']
+                    if expiries:
+                        logger.info(f"  ✅ Found {len(expiries)} expiries")
+                        logger.info(f"  ✅ Nearest: {expiries[0]}")
+                        return expiries[0]
                 
-                logger.warning(f"  ⚠️ Unexpected response format")
+                logger.warning(f"  ⚠️ No expiry data: {data}")
                 return None
             else:
-                logger.error(f"  ❌ HTTP Error: {response.status_code}")
-                logger.error(f"     Body: {response.text[:200]}")
+                logger.error(f"  ❌ HTTP {response.status_code}: {response.text[:200]}")
                 return None
             
         except Exception as e:
             logger.error(f"  ❌ Exception: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
             return None
     
     def filter_atm_strikes(self, oc_data, spot_price):
