@@ -9,12 +9,15 @@ import redis
 from collections import defaultdict
 import numpy as np
 
-# Logging setup
+# Logging setup (INFO level for detailed analysis logs)
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    level=logging.INFO  # Shows all analysis steps
 )
 logger = logging.getLogger(__name__)
+
+# Suppress httpx logs (too verbose)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # ========================
 # CONFIGURATION
@@ -257,9 +260,56 @@ class SmartTradingBot:
             logger.debug(f"Expiry error: {e}")
             return None
     
-    # ═══════════════════════════════════════════════════════════
-    # BOT'S OWN ANALYSIS ENGINE
-    # ═══════════════════════════════════════════════════════════
+    def filter_atm_strikes(self, oc_data, spot_price):
+        """ATM च्या आसपास फक्त ±5 strikes filter करतो (11 strikes total)"""
+        try:
+            all_strikes = oc_data.get('oc', {})
+            if not all_strikes:
+                return {}
+            
+            # सगळे strikes numeric format मध्ये घेतो
+            strike_prices = []
+            for strike in all_strikes.keys():
+                try:
+                    strike_prices.append(float(strike))
+                except:
+                    continue
+            
+            if not strike_prices:
+                return {}
+            
+            strike_prices.sort()
+            
+            # ATM strike शोधतो (spot च्या सर्वात जवळचा)
+            atm_strike = min(strike_prices, key=lambda x: abs(x - spot_price))
+            atm_index = strike_prices.index(atm_strike)
+            
+            # ATM ±5 strikes घेतो (total 11)
+            start_idx = max(0, atm_index - 5)
+            end_idx = min(len(strike_prices), atm_index + 6)
+            
+            filtered_strikes = strike_prices[start_idx:end_idx]
+            
+            # Filtered option chain तयार करतो
+            filtered_oc = {
+                'last_price': oc_data.get('last_price'),
+                'oc': {}
+            }
+            
+            for strike in filtered_strikes:
+                strike_key = str(int(strike))
+                if strike_key in all_strikes:
+                    filtered_oc['oc'][strike_key] = all_strikes[strike_key]
+            
+            logger.info(f"  ├─ ATM Strike: {atm_strike:.0f}")
+            logger.info(f"  ├─ Filtered: {len(filtered_oc['oc'])} strikes (ATM ±5)")
+            logger.info(f"  └─ Range: {min(filtered_strikes):.0f} to {max(filtered_strikes):.0f}")
+            
+            return filtered_oc
+            
+        except Exception as e:
+            logger.error(f"Error filtering ATM strikes: {e}")
+            return oc_data  # Return original data if filtering fails
     
     def calculate_oi_changes(self, current_oc, symbol):
         """OI changes calculate करतो (previous vs current)"""
@@ -734,52 +784,90 @@ Key Changes:
             security_id = info['security_id']
             segment = info['segment']
             
+            logger.info(f"\n{'─'*60}")
+            logger.info(f"🔍 Analyzing: {symbol}")
+            logger.info(f"{'─'*60}")
+            
             # Step 1: Expiry घेतो
             expiry = self.get_nearest_expiry(security_id, segment)
             if not expiry:
-                logger.debug(f"{symbol}: No expiry")
+                logger.warning(f"  ❌ {symbol}: No expiry found")
                 return
+            
+            logger.info(f"  ✅ Expiry: {expiry}")
             
             # Step 2: Option chain घेतो
             oc_data = self.get_option_chain(security_id, segment, expiry)
             if not oc_data:
-                logger.debug(f"{symbol}: No OC data")
+                logger.warning(f"  ❌ {symbol}: No option chain data")
                 return
             
             spot_price = oc_data.get('last_price', 0)
+            logger.info(f"  ✅ Spot Price: ₹{spot_price:,.2f}")
+            logger.info(f"  ✅ Total Strikes: {len(oc_data.get('oc', {}))}")
+            
+            # Step 2.5: ATM ±5 strikes filter करतो (NEW!)
+            filtered_oc = self.filter_atm_strikes(oc_data, spot_price)
             
             # Step 3: Candles घेतो
             candles = self.get_historical_candles(security_id, segment, symbol)
             if not candles or len(candles) < 20:
-                logger.debug(f"{symbol}: Not enough candles")
+                logger.warning(f"  ❌ {symbol}: Not enough candles (Got: {len(candles) if candles else 0}, Need: 20)")
                 return
+            
+            logger.info(f"  ✅ Candles: {len(candles)} × 5min")
+            
+            # Last 3 candles info
+            if len(candles) >= 3:
+                last_candle = candles[-1]
+                prev_candle = candles[-2]
+                logger.info(f"  ├─ Current: O:{last_candle['open']:.1f} H:{last_candle['high']:.1f} L:{last_candle['low']:.1f} C:{last_candle['close']:.1f} V:{last_candle['volume']:,}")
+                logger.info(f"  └─ Previous: O:{prev_candle['open']:.1f} H:{prev_candle['high']:.1f} L:{prev_candle['low']:.1f} C:{prev_candle['close']:.1f} V:{prev_candle['volume']:,}")
             
             # Step 4: OI changes calculate करतो
-            oi_changes = self.calculate_oi_changes(oc_data, symbol)
+            oi_changes = self.calculate_oi_changes(filtered_oc, symbol)
             if not oi_changes:
-                logger.debug(f"{symbol}: First run, saving data")
+                logger.info(f"  ℹ️ {symbol}: First run - saving baseline data")
                 return
             
+            # OI changes summary
+            total_ce_change = sum(c.get('ce_oi_change', 0) for c in oi_changes.values())
+            total_pe_change = sum(c.get('pe_oi_change', 0) for c in oi_changes.values())
+            logger.info(f"  ✅ OI Changes:")
+            logger.info(f"    ├─ CE Total: {total_ce_change:+,.0f}")
+            logger.info(f"    └─ PE Total: {total_pe_change:+,.0f}")
+            
             # Step 5: Bot's Analysis
+            logger.info(f"  🤖 Running bot analysis...")
             bot_analysis = self.calculate_signal_score(
-                oi_changes, candles, spot_price, oc_data
+                oi_changes, candles, spot_price, filtered_oc
             )
             
             if not bot_analysis:
+                logger.warning(f"  ❌ {symbol}: Bot analysis failed")
                 return
+            
+            logger.info(f"  📊 Bot Score: {bot_analysis['total_score']}/100")
+            logger.info(f"    ├─ OI Score: {bot_analysis['oi_score']}/50")
+            logger.info(f"    ├─ Chart Score: {bot_analysis['chart_score']}/50")
+            logger.info(f"    ├─ Signal: {bot_analysis['signal_type']}")
+            logger.info(f"    ├─ Pattern: {bot_analysis['details'].get('pattern', 'None')}")
+            logger.info(f"    ├─ PCR: {bot_analysis['details'].get('pcr', 0):.2f}")
+            logger.info(f"    └─ Confidence: {bot_analysis['confidence']}")
             
             # Step 6: Check if score >= 70
             if not bot_analysis['send_to_ai']:
-                logger.debug(f"{symbol}: Score {bot_analysis['total_score']}/100 (Low)")
+                logger.info(f"  ⚠️ {symbol}: Score too low, skipping AI")
                 return
             
             # 🔥 HIGH SCORE DETECTED!
+            logger.info(f"\n{'='*60}")
+            logger.info(f"🔥🔥🔥 HIGH SCORE ALERT! 🔥🔥🔥")
             logger.info(f"{'='*60}")
-            logger.info(f"🔥 {symbol}: HIGH SCORE = {bot_analysis['total_score']}/100")
-            logger.info(f"  ├─ Spot: ₹{spot_price:,.2f}")
-            logger.info(f"  ├─ Signal: {bot_analysis['signal_type']}")
-            logger.info(f"  ├─ OI: {bot_analysis['oi_score']}/50")
-            logger.info(f"  └─ Chart: {bot_analysis['chart_score']}/50")
+            logger.info(f"Symbol: {symbol}")
+            logger.info(f"Score: {bot_analysis['total_score']}/100")
+            logger.info(f"Signal: {bot_analysis['signal_type']}")
+            logger.info(f"Spot: ₹{spot_price:,.2f}")
             logger.info(f"{'='*60}")
             
             # Step 7: Prepare data for AI
@@ -788,20 +876,25 @@ Key Changes:
             )
             
             # Step 8: AI Verification
-            logger.info(f"🤖 {symbol}: Verifying with DeepSeek AI...")
+            logger.info(f"🤖 Sending to DeepSeek AI for verification...")
             ai_response = await self.verify_with_ai(ai_data)
             
             if not ai_response:
-                logger.warning(f"{symbol}: AI unavailable")
+                logger.warning(f"❌ AI verification failed or unavailable")
                 return
             
-            logger.info(f"✅ {symbol}: AI {ai_response['status']} ({ai_response.get('confidence', 0)}%)")
+            logger.info(f"✅ AI Response: {ai_response['status']}")
+            logger.info(f"✅ AI Confidence: {ai_response.get('confidence', 0)}%")
             
             # Step 9: Send signal to Telegram
             await self.send_signal(symbol, ai_data, ai_response, bot_analysis)
             
+            logger.info(f"{'='*60}\n")
+            
         except Exception as e:
-            logger.debug(f"{symbol}: Error - {e}")
+            logger.error(f"❌ {symbol}: Error - {e}")
+            import traceback
+            logger.debug(traceback.format_exc())
     
     # ═══════════════════════════════════════════════════════════
     # MAIN RUN LOOP
