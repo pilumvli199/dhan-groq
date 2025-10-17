@@ -419,7 +419,7 @@ class DhanOptionChainBot:
             return None
     
     async def get_deepseek_analysis(self, analysis_data):
-        """DeepSeek V3 कडून AI analysis घेतो"""
+        """DeepSeek R1 Reasoner कडून AI analysis घेतो"""
         try:
             if not DEEPSEEK_API_KEY:
                 logger.error("DeepSeek API key missing!")
@@ -519,28 +519,43 @@ If CLEAR opportunity exists:
                 'Content-Type': 'application/json'
             }
             
+            # DeepSeek R1 Reasoner model use करतो (खूपच powerful reasoning!)
             payload = {
-                'model': 'deepseek-chat',
+                'model': 'deepseek-reasoner',  # ✅ Reasoner mode (R1 model)
                 'messages': [
-                    {'role': 'system', 'content': 'You are a professional options trader who only takes high-probability trades with clear price action and options data confirmation. You are conservative and skip trades when setup is not clear.'},
-                    {'role': 'user', 'content': prompt}
+                    {
+                        'role': 'user', 
+                        'content': prompt
+                    }
                 ],
-                'temperature': 0.1,  # Very low temperature for consistent, strict analysis
-                'max_tokens': 600
+                'temperature': 1.0,  # Reasoner साठी recommended temperature
+                'max_tokens': 8000  # Reasoner साठी जास्त tokens (reasoning_content + answer)
             }
             
-            logger.info(f"Calling DeepSeek API for {analysis_data['symbol']}...")
+            logger.info(f"🧠 Calling DeepSeek R1 Reasoner for {analysis_data['symbol']}...")
             
             response = requests.post(
                 DEEPSEEK_API_URL,
                 headers=headers,
                 json=payload,
-                timeout=30
+                timeout=45  # Reasoner थोडा जास्त वेळ घेतो
             )
             
             if response.status_code == 200:
                 result = response.json()
-                content = result['choices'][0]['message']['content']
+                
+                # Reasoner response format वेगळा आहे:
+                # reasoning_content = internal thinking process
+                # content = final answer
+                message = result['choices'][0]['message']
+                
+                # Reasoning process (optional - तुम्ही पाहू शकता logs मध्ये)
+                reasoning_content = message.get('reasoning_content', '')
+                if reasoning_content:
+                    logger.info(f"🧠 Reasoner thinking process:\n{reasoning_content[:500]}...")
+                
+                # Final answer
+                content = message.get('content', '')
                 
                 try:
                     start = content.find('{')
@@ -549,7 +564,7 @@ If CLEAR opportunity exists:
                         json_str = content[start:end]
                         analysis = json.loads(json_str)
                         
-                        # Extra validation: फक्त high confidence signals पाठवतो
+                        # Extra validation: फक्त high confidence signals
                         signal = analysis.get('signal', 'NO TRADE')
                         confidence = analysis.get('confidence', 0)
                         
@@ -561,10 +576,10 @@ If CLEAR opportunity exists:
                                 'reasoning': f'Confidence too low ({confidence}%). Need ≥75% for signal.'
                             }
                         
-                        logger.info(f"✅ DeepSeek analysis: {signal} (Confidence: {confidence}%)")
+                        logger.info(f"✅ DeepSeek R1 Reasoner analysis: {signal} (Confidence: {confidence}%)")
                         return analysis
                     else:
-                        logger.warning("No JSON found in DeepSeek response")
+                        logger.warning("No JSON found in Reasoner response")
                         return None
                 except json.JSONDecodeError as e:
                     logger.error(f"JSON parse error: {e}")
@@ -575,7 +590,7 @@ If CLEAR opportunity exists:
                 return None
                 
         except Exception as e:
-            logger.error(f"Error calling DeepSeek API: {e}")
+            logger.error(f"Error calling DeepSeek Reasoner: {e}")
             return None
     
     def format_signal_message(self, symbol, analysis):
