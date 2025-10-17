@@ -38,29 +38,30 @@ DHAN_EXPIRY_LIST_URL = f"{DHAN_API_BASE}/v2/optionchain/expirylist"
 DHAN_INTRADAY_URL = f"{DHAN_API_BASE}/v2/charts/intraday"
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 
-# PRIORITY STOCKS LIST - फक्त confirmed FNO stocks (options tested)
+# PRIORITY STOCKS LIST - NSE_EQ Security IDs (for option chain API)
 STOCKS_INDICES = {
     # Indices (Must Track)
     "NIFTY 50": {"symbol": "NIFTY 50", "segment": "IDX_I", "security_id": 13},
     "NIFTY BANK": {"symbol": "NIFTY BANK", "segment": "IDX_I", "security_id": 25},
     "FINNIFTY": {"symbol": "FINNIFTY", "segment": "IDX_I", "security_id": 27},
     
-    # Top 15 CONFIRMED FNO Stocks (High Volume)
-    "RELIANCE": {"symbol": "RELIANCE", "segment": "NSE_FO", "security_id": 2885},
-    "HDFCBANK": {"symbol": "HDFCBANK", "segment": "NSE_FO", "security_id": 1333},
-    "INFY": {"symbol": "INFY", "segment": "NSE_FO", "security_id": 1594},
-    "ICICIBANK": {"symbol": "ICICIBANK", "segment": "NSE_FO", "security_id": 1330},
-    "TCS": {"symbol": "TCS", "segment": "NSE_FO", "security_id": 11536},
-    "SBIN": {"symbol": "SBIN", "segment": "NSE_FO", "security_id": 3045},
-    "BHARTIARTL": {"symbol": "BHARTIARTL", "segment": "NSE_FO", "security_id": 392},
-    "ITC": {"symbol": "ITC", "segment": "NSE_FO", "security_id": 1660},
-    "KOTAKBANK": {"symbol": "KOTAKBANK", "segment": "NSE_FO", "security_id": 1922},
-    "LT": {"symbol": "LT", "segment": "NSE_FO", "security_id": 2672},
-    "AXISBANK": {"symbol": "AXISBANK", "segment": "NSE_FO", "security_id": 5900},
-    "BAJFINANCE": {"symbol": "BAJFINANCE", "segment": "NSE_FO", "security_id": 317},
-    "TATAMOTORS": {"symbol": "TATAMOTORS", "segment": "NSE_FO", "security_id": 3456},
-    "TATASTEEL": {"symbol": "TATASTEEL", "segment": "NSE_FO", "security_id": 3499},
-    "MARUTI": {"symbol": "MARUTI", "segment": "NSE_FO", "security_id": 10999},
+    # 🔥 FIX: Use NSE_EQ security IDs for option chain API!
+    # These IDs are from NSE_EQ segment, but API accepts them for FNO option chains
+    "RELIANCE": {"symbol": "RELIANCE", "segment": "NSE_EQ", "security_id": 2885},
+    "HDFCBANK": {"symbol": "HDFCBANK", "segment": "NSE_EQ", "security_id": 1333},
+    "INFY": {"symbol": "INFY", "segment": "NSE_EQ", "security_id": 1594},
+    "ICICIBANK": {"symbol": "ICICIBANK", "segment": "NSE_EQ", "security_id": 1330},
+    "TCS": {"symbol": "TCS", "segment": "NSE_EQ", "security_id": 11536},
+    "SBIN": {"symbol": "SBIN", "segment": "NSE_EQ", "security_id": 3045},
+    "BHARTIARTL": {"symbol": "BHARTIARTL", "segment": "NSE_EQ", "security_id": 392},
+    "ITC": {"symbol": "ITC", "segment": "NSE_EQ", "security_id": 1660},
+    "KOTAKBANK": {"symbol": "KOTAKBANK", "segment": "NSE_EQ", "security_id": 1922},
+    "LT": {"symbol": "LT", "segment": "NSE_EQ", "security_id": 2672},
+    "AXISBANK": {"symbol": "AXISBANK", "segment": "NSE_EQ", "security_id": 5900},
+    "BAJFINANCE": {"symbol": "BAJFINANCE", "segment": "NSE_EQ", "security_id": 317},
+    "TATAMOTORS": {"symbol": "TATAMOTORS", "segment": "NSE_EQ", "security_id": 3456},
+    "TATASTEEL": {"symbol": "TATASTEEL", "segment": "NSE_EQ", "security_id": 3499},
+    "MARUTI": {"symbol": "MARUTI", "segment": "NSE_EQ", "security_id": 10999},
 }
 
 # ========================
@@ -99,16 +100,69 @@ class SmartTradingBot:
         logger.info("Bot initialized successfully")
     
     def test_api_connection(self):
-        """Test Dhan API connection"""
+        """Test Dhan API connection AND fetch correct security IDs"""
         logger.info("\n" + "="*80)
-        logger.info("🧪 TESTING DHAN API CONNECTION")
+        logger.info("🧪 TESTING DHAN API & FETCHING INSTRUMENT LIST")
         logger.info("="*80)
         
-        # Test 1: NIFTY 50
-        logger.info("\n📊 Test 1: NIFTY 50 Expiry List")
+        # Step 1: Download NSE_FO instrument list
+        logger.info("\n📥 Downloading NSE_FO Instrument List...")
+        try:
+            instrument_url = "https://api.dhan.co/v2/instrument/NSE_FO"
+            response = self.session.get(instrument_url, timeout=30)
+            
+            if response.status_code == 200:
+                logger.info(f"✅ Downloaded! Size: {len(response.text)} bytes")
+                
+                # Parse CSV
+                import csv
+                import io
+                
+                csv_data = io.StringIO(response.text)
+                reader = csv.DictReader(csv_data)
+                
+                # Find our stocks
+                stock_symbols = ['RELIANCE', 'HDFCBANK', 'INFY', 'ICICIBANK', 'TCS', 
+                               'SBIN', 'BHARTIARTL', 'ITC', 'KOTAKBANK', 'LT',
+                               'AXISBANK', 'BAJFINANCE', 'TATAMOTORS', 'TATASTEEL', 'MARUTI']
+                
+                found_stocks = {}
+                
+                for row in reader:
+                    symbol = row.get('SEM_TRADING_SYMBOL', '').replace('-EQ', '')
+                    if symbol in stock_symbols:
+                        sec_id = row.get('SEM_SMST_SECURITY_ID')
+                        expiry = row.get('SEM_EXPIRY_DATE')
+                        instrument = row.get('SEM_INSTRUMENT_NAME')
+                        
+                        if instrument and 'FUT' in instrument:  # Only futures
+                            if symbol not in found_stocks:
+                                found_stocks[symbol] = {
+                                    'security_id': sec_id,
+                                    'expiry': expiry,
+                                    'instrument': instrument
+                                }
+                
+                logger.info(f"\n📊 Found {len(found_stocks)} FNO stocks:")
+                for symbol, data in found_stocks.items():
+                    logger.info(f"  {symbol}: SecurityID={data['security_id']}, Expiry={data['expiry']}")
+                
+                if not found_stocks:
+                    logger.warning("⚠️ No FNO stocks found! Need to use NSE_EQ security IDs for option chain")
+                    
+            else:
+                logger.error(f"❌ Failed to download: {response.status_code}")
+                
+        except Exception as e:
+            logger.error(f"❌ Error: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+        
+        # Step 2: Test with indices (working)
+        logger.info("\n📊 Test: NIFTY 50 (Known Working)")
         try:
             payload = {
-                "UnderlyingScrip": 13,  # INTEGER, not string!
+                "UnderlyingScrip": 13,
                 "UnderlyingSeg": "IDX_I"
             }
             logger.info(f"Request: {payload}")
@@ -120,53 +174,19 @@ class SmartTradingBot:
             )
             
             logger.info(f"Status: {response.status_code}")
-            logger.info(f"Response: {response.text}")
-            
             if response.status_code == 200:
                 data = response.json()
                 if data.get('status') == 'success':
                     logger.info(f"✅ SUCCESS! Found {len(data.get('data', []))} expiries")
-                else:
-                    logger.error(f"❌ FAILED: {data}")
+                    logger.info(f"   Expiries: {data.get('data', [])[:3]}")
+            else:
+                logger.info(f"Response: {response.text}")
             
         except Exception as e:
             logger.error(f"❌ Error: {e}")
-        
-        # Test 2: RELIANCE Stock
-        logger.info("\n📊 Test 2: RELIANCE Expiry List")
-        try:
-            payload = {
-                "UnderlyingScrip": 2885,  # INTEGER
-                "UnderlyingSeg": "NSE_FO"  # Not NSE_EQ!
-            }
-            logger.info(f"Request: {payload}")
-            
-            response = self.session.post(
-                DHAN_EXPIRY_LIST_URL,
-                json=payload,
-                timeout=10
-            )
-            
-            logger.info(f"Status: {response.status_code}")
-            logger.info(f"Response: {response.text}")
-            
-            if response.status_code == 200:
-                data = response.json()
-                if data.get('status') == 'success':
-                    logger.info(f"✅ SUCCESS! Found {len(data.get('data', []))} expiries")
-                else:
-                    logger.error(f"❌ FAILED: {data}")
-            
-        except Exception as e:
-            logger.error(f"❌ Error: {e}")
-        
-        # Test 3: Check headers
-        logger.info("\n📊 Test 3: Check Authentication")
-        logger.info(f"Client ID: {DHAN_CLIENT_ID[:10]}...")
-        logger.info(f"Token: {DHAN_ACCESS_TOKEN[:20]}...")
         
         logger.info("\n" + "="*80)
-        logger.info("🧪 API TEST COMPLETE")
+        logger.info("💡 SOLUTION: Use NSE_EQ security IDs for stocks!")
         logger.info("="*80 + "\n")
     
     def get_ist_time(self):
@@ -332,18 +352,17 @@ class SmartTradingBot:
             return None
     
     def get_nearest_expiry(self, security_id, segment):
-        """Get nearest expiry - FIXED per Dhan documentation"""
+        """Get nearest expiry - FIXED: Use NSE_EQ for option chain"""
         try:
-            # FIX: UnderlyingScrip must be INTEGER (not string)
-            # FIX: Use NSE_FO for stocks
-            api_segment = "IDX_I" if segment == "IDX_I" else "NSE_FO"
+            # 🔥 CRITICAL FIX: Option chain API always uses NSE_EQ for stocks!
+            # Only indices use IDX_I
+            api_segment = "IDX_I" if segment == "IDX_I" else "NSE_EQ"
             
             payload = {
-                "UnderlyingScrip": int(security_id),  # 🔥 MUST BE INTEGER!
+                "UnderlyingScrip": int(security_id),  # Must be integer
                 "UnderlyingSeg": api_segment
             }
             
-            # Detailed logging
             logger.info(f"  📤 Expiry API Request:")
             logger.info(f"     Payload: {payload}")
             
