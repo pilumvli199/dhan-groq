@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 import mplfinance as mpf
 import pandas as pd
+import json
 
 # Logging setup
 logging.basicConfig(
@@ -27,6 +28,10 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 DHAN_CLIENT_ID = os.getenv("DHAN_CLIENT_ID")
 DHAN_ACCESS_TOKEN = os.getenv("DHAN_ACCESS_TOKEN")
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")  # DeepSeek API key
+
+# DeepSeek API URL
+DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 
 # Dhan API URLs
 DHAN_API_BASE = "https://api.dhan.co"
@@ -37,14 +42,11 @@ DHAN_INSTRUMENTS_URL = "https://images.dhan.co/api-data/api-scrip-master.csv"
 DHAN_HISTORICAL_URL = f"{DHAN_API_BASE}/v2/charts/historical"
 DHAN_INTRADAY_URL = f"{DHAN_API_BASE}/v2/charts/intraday"
 
-# Stock/Index List - Symbol mapping
+# Stock/Index List
 STOCKS_INDICES = {
-    # Indices
     "NIFTY 50": {"symbol": "NIFTY 50", "segment": "IDX_I"},
     "NIFTY BANK": {"symbol": "NIFTY BANK", "segment": "IDX_I"},
     "SENSEX": {"symbol": "SENSEX", "segment": "IDX_I"},
-    
-    # Stocks
     "RELIANCE": {"symbol": "RELIANCE", "segment": "NSE_EQ"},
     "HDFCBANK": {"symbol": "HDFCBANK", "segment": "NSE_EQ"},
     "ICICIBANK": {"symbol": "ICICIBANK", "segment": "NSE_EQ"},
@@ -91,13 +93,12 @@ class DhanOptionChainBot:
         logger.info("Bot initialized successfully")
     
     async def load_security_ids(self):
-        """Dhan मधून security IDs load करतो (without pandas)"""
+        """Dhan मधून security IDs load करतो"""
         try:
             logger.info("Loading security IDs from Dhan...")
             response = requests.get(DHAN_INSTRUMENTS_URL, timeout=30)
             
             if response.status_code == 200:
-                # CSV parse करतो manually
                 csv_data = response.text.split('\n')
                 reader = csv.DictReader(csv_data)
                 
@@ -105,10 +106,8 @@ class DhanOptionChainBot:
                     segment = info['segment']
                     symbol_name = info['symbol']
                     
-                    # CSV मध्ये शोधतो
                     for row in reader:
                         try:
-                            # Index साठी
                             if segment == "IDX_I":
                                 if (row.get('SEM_SEGMENT') == 'I' and 
                                     row.get('SEM_TRADING_SYMBOL') == symbol_name):
@@ -121,8 +120,6 @@ class DhanOptionChainBot:
                                         }
                                         logger.info(f"✅ {symbol}: Security ID = {sec_id}")
                                         break
-                            
-                            # Stock साठी
                             else:
                                 if (row.get('SEM_SEGMENT') == 'E' and 
                                     row.get('SEM_TRADING_SYMBOL') == symbol_name and
@@ -139,7 +136,6 @@ class DhanOptionChainBot:
                         except Exception as e:
                             continue
                     
-                    # Reset CSV reader for next symbol
                     csv_data_reset = response.text.split('\n')
                     reader = csv.DictReader(csv_data_reset)
                 
@@ -153,12 +149,11 @@ class DhanOptionChainBot:
             logger.error(f"Error loading security IDs: {e}")
             return False
     
-    def get_historical_data(self, security_id, segment, symbol):
-        """Last 5 days चे सर्व 5-minute candles घेतो"""
+    def get_historical_data(self, security_id, segment, symbol, candle_count=50):
+        """Last 50 5-minute candles घेतो"""
         try:
             from datetime import datetime, timedelta
             
-            # Exchange segment निवडतो
             if segment == "IDX_I":
                 exch_seg = "IDX_I"
                 instrument = "INDEX"
@@ -166,16 +161,14 @@ class DhanOptionChainBot:
                 exch_seg = "NSE_EQ"
                 instrument = "EQUITY"
             
-            # Last 5 trading days साठी dates
             to_date = datetime.now()
-            from_date = to_date - timedelta(days=7)  # 7 days back to ensure 5 trading days
+            from_date = to_date - timedelta(days=7)
             
-            # Intraday API साठी payload (5 min candles with date range)
             payload = {
                 "securityId": str(security_id),
                 "exchangeSegment": exch_seg,
                 "instrument": instrument,
-                "interval": "5",  # 5 minute candles
+                "interval": "5",
                 "fromDate": from_date.strftime("%Y-%m-%d"),
                 "toDate": to_date.strftime("%Y-%m-%d")
             }
@@ -189,12 +182,9 @@ class DhanOptionChainBot:
                 timeout=15
             )
             
-            logger.info(f"{symbol} Intraday response status: {response.status_code}")
-            
             if response.status_code == 200:
                 data = response.json()
                 
-                # Response format: {"open": [...], "high": [...], "low": [...], "close": [...], "volume": [...], "start_Time": [...]}
                 if 'open' in data and 'high' in data and 'low' in data and 'close' in data:
                     opens = data.get('open', [])
                     highs = data.get('high', [])
@@ -203,9 +193,6 @@ class DhanOptionChainBot:
                     volumes = data.get('volume', [])
                     timestamps = data.get('start_Time', [])
                     
-                    logger.info(f"{symbol}: Total arrays length - Open:{len(opens)}, Time:{len(timestamps)}")
-                    
-                    # Candles तयार करतो
                     candles = []
                     for i in range(len(opens)):
                         candles.append({
@@ -217,11 +204,12 @@ class DhanOptionChainBot:
                             'volume': volumes[i] if i < len(volumes) else 0
                         })
                     
-                    # सर्व available candles return करतो (no limit!)
-                    logger.info(f"{symbol}: Returning ALL {len(candles)} candles from last 5 days (5 min)")
-                    return candles
+                    # Last 50 candles return करतो
+                    last_candles = candles[-candle_count:] if len(candles) >= candle_count else candles
+                    logger.info(f"{symbol}: Returning last {len(last_candles)} candles (5 min)")
+                    return last_candles
                 else:
-                    logger.warning(f"{symbol}: Invalid response format - {str(data)[:200]}")
+                    logger.warning(f"{symbol}: Invalid response format")
                     return None
             
             logger.warning(f"{symbol}: Historical data नाही मिळाला - Status: {response.status_code}")
@@ -234,7 +222,6 @@ class DhanOptionChainBot:
     def create_candlestick_chart(self, candles, symbol, spot_price):
         """Candlestick chart तयार करतो"""
         try:
-            # DataFrame तयार करतो
             df_data = []
             for candle in candles:
                 timestamp = candle.get('timestamp', candle.get('start_Time', ''))
@@ -244,18 +231,16 @@ class DhanOptionChainBot:
                     'High': float(candle.get('high', 0)),
                     'Low': float(candle.get('low', 0)),
                     'Close': float(candle.get('close', 0)),
-                    'Volume': int(float(candle.get('volume', 0)))  # Float to int conversion
+                    'Volume': int(float(candle.get('volume', 0)))
                 })
             
             df = pd.DataFrame(df_data)
             df.set_index('Date', inplace=True)
             
-            # Check if enough data
             if len(df) < 2:
                 logger.warning(f"{symbol}: Not enough candles ({len(df)}) for chart")
                 return None
             
-            # Chart style
             mc = mpf.make_marketcolors(
                 up='#26a69a',
                 down='#ef5350',
@@ -274,7 +259,6 @@ class DhanOptionChainBot:
                 y_on_right=False
             )
             
-            # Chart बनवतो
             fig, axes = mpf.plot(
                 df,
                 type='candle',
@@ -288,7 +272,6 @@ class DhanOptionChainBot:
                 tight_layout=True
             )
             
-            # Title customize करतो
             axes[0].set_title(
                 f'{symbol} - Last {len(candles)} Candles | Spot: ₹{spot_price:,.2f}',
                 color='white',
@@ -297,7 +280,6 @@ class DhanOptionChainBot:
                 pad=20
             )
             
-            # Axes color
             for ax in axes:
                 ax.tick_params(colors='white', which='both')
                 ax.spines['bottom'].set_color('white')
@@ -307,7 +289,6 @@ class DhanOptionChainBot:
                 ax.xaxis.label.set_color('white')
                 ax.yaxis.label.set_color('white')
             
-            # Memory buffer मध्ये save करतो
             buf = io.BytesIO()
             fig.savefig(buf, format='png', dpi=100, bbox_inches='tight', facecolor='#1e1e1e')
             buf.seek(0)
@@ -339,7 +320,7 @@ class DhanOptionChainBot:
                 if data.get('status') == 'success' and data.get('data'):
                     expiries = data['data']
                     if expiries:
-                        return expiries[0]  # पहिला expiry = nearest
+                        return expiries[0]
             
             return None
             
@@ -374,77 +355,208 @@ class DhanOptionChainBot:
             logger.error(f"Error getting option chain: {e}")
             return None
     
-    def format_option_chain_message(self, symbol, data, expiry):
-        """Option chain साठी सुंदर message format"""
+    def prepare_analysis_data(self, symbol, candles, oc_data, expiry):
+        """DeepSeek साठी data prepare करतो"""
         try:
-            spot_price = data.get('last_price', 0)
-            oc_data = data.get('oc', {})
-            
-            if not oc_data:
-                return None
+            spot_price = oc_data.get('last_price', 0)
+            oc = oc_data.get('oc', {})
             
             # ATM strike शोधतो
-            strikes = sorted([float(s) for s in oc_data.keys()])
+            strikes = sorted([float(s) for s in oc.keys()])
             atm_strike = min(strikes, key=lambda x: abs(x - spot_price))
             
-            # ATM च्या आजूबाजूचे 5 strikes घेतो (एकूण 11)
+            # ATM च्या आजूबाजूचे 5 strikes (11 total)
             atm_idx = strikes.index(atm_strike)
             start_idx = max(0, atm_idx - 5)
             end_idx = min(len(strikes), atm_idx + 6)
             selected_strikes = strikes[start_idx:end_idx]
             
-            # Message तयार करतो
-            msg = f"📊 *{symbol} OPTION CHAIN*\n"
-            msg += f"📅 Expiry: {expiry}\n"
-            msg += f"💰 Spot: ₹{spot_price:,.2f}\n"
-            msg += f"🎯 ATM: ₹{atm_strike:,.0f}\n\n"
-            
-            msg += "```\n"
-            msg += "Strike   CE-LTP  CE-OI  CE-Vol  PE-LTP  PE-OI  PE-Vol\n"
-            msg += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            
+            # Option chain simplified data
+            option_data = []
             for strike in selected_strikes:
                 strike_key = f"{strike:.6f}"
-                strike_data = oc_data.get(strike_key, {})
+                strike_data = oc.get(strike_key, {})
                 
                 ce = strike_data.get('ce', {})
                 pe = strike_data.get('pe', {})
                 
-                ce_ltp = ce.get('last_price', 0)
-                ce_oi = ce.get('oi', 0)
-                ce_vol = ce.get('volume', 0)
-                
-                pe_ltp = pe.get('last_price', 0)
-                pe_oi = pe.get('oi', 0)
-                pe_vol = pe.get('volume', 0)
-                
-                # ATM mark करतो
-                atm_mark = "🔸" if strike == atm_strike else "  "
-                
-                msg += f"{atm_mark}{strike:6.0f}  {ce_ltp:6.1f} {ce_oi/1000:6.0f}K {ce_vol/1000:6.0f}K  {pe_ltp:6.1f} {pe_oi/1000:6.0f}K {pe_vol/1000:6.0f}K\n"
+                option_data.append({
+                    'strike': strike,
+                    'is_atm': strike == atm_strike,
+                    'ce': {
+                        'ltp': ce.get('last_price', 0),
+                        'oi': ce.get('oi', 0),
+                        'volume': ce.get('volume', 0),
+                        'iv': ce.get('implied_volatility', 0),
+                        'delta': ce.get('greeks', {}).get('delta', 0),
+                        'theta': ce.get('greeks', {}).get('theta', 0)
+                    },
+                    'pe': {
+                        'ltp': pe.get('last_price', 0),
+                        'oi': pe.get('oi', 0),
+                        'volume': pe.get('volume', 0),
+                        'iv': pe.get('implied_volatility', 0),
+                        'delta': pe.get('greeks', {}).get('delta', 0),
+                        'theta': pe.get('greeks', {}).get('theta', 0)
+                    }
+                })
             
-            msg += "```\n\n"
+            # Last 50 candles simplified
+            candle_data = []
+            for c in candles[-50:]:
+                candle_data.append({
+                    'open': c['open'],
+                    'high': c['high'],
+                    'low': c['low'],
+                    'close': c['close'],
+                    'volume': c['volume']
+                })
             
-            # Greeks आणि IV (ATM साठी)
-            atm_data = oc_data.get(f"{atm_strike:.6f}", {})
-            if atm_data:
-                ce_greeks = atm_data.get('ce', {}).get('greeks', {})
-                pe_greeks = atm_data.get('pe', {}).get('greeks', {})
-                ce_iv = atm_data.get('ce', {}).get('implied_volatility', 0)
-                pe_iv = atm_data.get('pe', {}).get('implied_volatility', 0)
+            analysis_input = {
+                'symbol': symbol,
+                'spot_price': spot_price,
+                'expiry': expiry,
+                'atm_strike': atm_strike,
+                'candles': candle_data,
+                'option_chain': option_data
+            }
+            
+            return analysis_input
+            
+        except Exception as e:
+            logger.error(f"Error preparing analysis data: {e}")
+            return None
+    
+    async def get_deepseek_analysis(self, analysis_data):
+        """DeepSeek V3 कडून AI analysis घेतो"""
+        try:
+            if not DEEPSEEK_API_KEY:
+                logger.error("DeepSeek API key missing!")
+                return None
+            
+            # Prompt तयार करतो
+            prompt = f"""You are an expert options trader analyzing Indian stock market data.
+
+Symbol: {analysis_data['symbol']}
+Spot Price: ₹{analysis_data['spot_price']:,.2f}
+ATM Strike: ₹{analysis_data['atm_strike']:,.0f}
+Expiry: {analysis_data['expiry']}
+
+CANDLESTICK DATA (Last 50 5-min candles):
+{json.dumps(analysis_data['candles'], indent=2)}
+
+OPTION CHAIN DATA (ATM ± 5 strikes):
+{json.dumps(analysis_data['option_chain'], indent=2)}
+
+Task: Analyze the data and provide ONLY ONE clear trading signal:
+1. BUY CE (Call Option) - if bullish setup
+2. BUY PE (Put Option) - if bearish setup
+3. NO TRADE - if no clear signal
+
+Your response MUST be in this EXACT JSON format:
+{{
+  "signal": "BUY CE" or "BUY PE" or "NO TRADE",
+  "strike": <recommended strike price>,
+  "entry_price": <option premium to enter>,
+  "target": <profit target premium>,
+  "stoploss": <stoploss premium>,
+  "confidence": <0-100>,
+  "reasoning": "<brief 2-3 line explanation>"
+}}
+
+Consider:
+- Candlestick patterns (bullish/bearish)
+- Support/Resistance levels
+- Volume trends
+- OI data (buildup/unwinding)
+- IV levels
+- Greeks (Delta, Theta)
+
+Be strict: Only give BUY signal if confidence > 70%."""
+
+            headers = {
+                'Authorization': f'Bearer {DEEPSEEK_API_KEY}',
+                'Content-Type': 'application/json'
+            }
+            
+            payload = {
+                'model': 'deepseek-chat',
+                'messages': [
+                    {'role': 'user', 'content': prompt}
+                ],
+                'temperature': 0.3,
+                'max_tokens': 500
+            }
+            
+            logger.info(f"Calling DeepSeek API for {analysis_data['symbol']}...")
+            
+            response = requests.post(
+                DEEPSEEK_API_URL,
+                headers=headers,
+                json=payload,
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                content = result['choices'][0]['message']['content']
                 
-                msg += "📈 *ATM Greeks & IV:*\n"
-                msg += f"CE: Δ={ce_greeks.get('delta', 0):.3f} Θ={ce_greeks.get('theta', 0):.2f} IV={ce_iv:.1f}%\n"
-                msg += f"PE: Δ={pe_greeks.get('delta', 0):.3f} Θ={pe_greeks.get('theta', 0):.2f} IV={pe_iv:.1f}%\n"
+                # JSON extract करतो
+                try:
+                    # Find JSON in response
+                    start = content.find('{')
+                    end = content.rfind('}') + 1
+                    if start != -1 and end != 0:
+                        json_str = content[start:end]
+                        analysis = json.loads(json_str)
+                        logger.info(f"✅ DeepSeek analysis received for {analysis_data['symbol']}")
+                        return analysis
+                    else:
+                        logger.warning("No JSON found in DeepSeek response")
+                        return None
+                except json.JSONDecodeError as e:
+                    logger.error(f"JSON parse error: {e}")
+                    logger.error(f"Response content: {content}")
+                    return None
+            else:
+                logger.error(f"DeepSeek API error: {response.status_code} - {response.text}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error calling DeepSeek API: {e}")
+            return None
+    
+    def format_signal_message(self, symbol, analysis):
+        """Trading signal साठी message format"""
+        try:
+            signal = analysis.get('signal', 'NO TRADE')
+            
+            if signal == 'NO TRADE':
+                msg = f"⚪️ *{symbol} - NO TRADE SIGNAL*\n\n"
+                msg += f"📊 Confidence: {analysis.get('confidence', 0)}%\n"
+                msg += f"💭 Reason: {analysis.get('reasoning', 'Market conditions unclear')}\n"
+                return msg
+            
+            # BUY signal
+            emoji = "🟢" if signal == "BUY CE" else "🔴"
+            
+            msg = f"{emoji} *{symbol} - {signal}*\n\n"
+            msg += f"🎯 Strike: ₹{analysis.get('strike', 0):,.0f}\n"
+            msg += f"💰 Entry: ₹{analysis.get('entry_price', 0):,.2f}\n"
+            msg += f"📈 Target: ₹{analysis.get('target', 0):,.2f}\n"
+            msg += f"🛑 Stoploss: ₹{analysis.get('stoploss', 0):,.2f}\n"
+            msg += f"📊 Confidence: {analysis.get('confidence', 0)}%\n\n"
+            msg += f"💡 *Analysis:*\n{analysis.get('reasoning', 'AI analysis completed')}\n\n"
+            msg += f"⚠️ _Disclaimer: This is AI-generated analysis. Trade at your own risk._"
             
             return msg
             
         except Exception as e:
-            logger.error(f"Error formatting message for {symbol}: {e}")
+            logger.error(f"Error formatting signal message: {e}")
             return None
     
     async def send_option_chain_batch(self, symbols_batch):
-        """एका batch चे option chain data + chart पाठवतो"""
+        """एका batch चे option chain + AI analysis पाठवतो"""
         for symbol in symbols_batch:
             try:
                 if symbol not in self.security_id_map:
@@ -455,7 +567,7 @@ class DhanOptionChainBot:
                 security_id = info['security_id']
                 segment = info['segment']
                 
-                # Nearest expiry शोधतो
+                # Nearest expiry
                 expiry = self.get_nearest_expiry(security_id, segment)
                 if not expiry:
                     logger.warning(f"{symbol}: Expiry नाही मिळाला")
@@ -463,7 +575,7 @@ class DhanOptionChainBot:
                 
                 logger.info(f"Fetching data for {symbol} (Expiry: {expiry})...")
                 
-                # Option chain data घेतो
+                # Option chain data
                 oc_data = self.get_option_chain(security_id, segment, expiry)
                 if not oc_data:
                     logger.warning(f"{symbol}: Option chain data नाही मिळाला")
@@ -471,108 +583,28 @@ class DhanOptionChainBot:
                 
                 spot_price = oc_data.get('last_price', 0)
                 
-                # Historical data घेतो (candles साठी)
-                logger.info(f"Fetching historical candles for {symbol}...")
-                candles = self.get_historical_data(security_id, segment, symbol)
+                # Historical candles (last 50)
+                logger.info(f"Fetching last 50 candles for {symbol}...")
+                candles = self.get_historical_data(security_id, segment, symbol, candle_count=50)
                 
-                # Chart तयार करतो
-                chart_buf = None
-                if candles:
-                    logger.info(f"Creating candlestick chart for {symbol}...")
-                    chart_buf = self.create_candlestick_chart(candles, symbol, spot_price)
+                if not candles or len(candles) < 10:
+                    logger.warning(f"{symbol}: Insufficient candle data")
+                    continue
                 
-                # Chart पाठवतो (जर available असेल तर)
-                if chart_buf:
-                    await self.bot.send_photo(
-                        chat_id=TELEGRAM_CHAT_ID,
-                        photo=chart_buf,
-                        caption=f"📊 {symbol} - Last {len(candles)} Candles Chart"
-                    )
-                    logger.info(f"✅ {symbol} chart sent")
-                    await asyncio.sleep(1)
+                # Chart बनवतो
+                chart_buf = self.create_candlestick_chart(candles, symbol, spot_price)
                 
-                # Option chain message format करतो
-                message = self.format_option_chain_message(symbol, oc_data, expiry)
-                if message:
-                    await self.bot.send_message(
-                        chat_id=TELEGRAM_CHAT_ID,
-                        text=message,
-                        parse_mode='Markdown'
-                    )
-                    logger.info(f"✅ {symbol} option chain sent")
+                # DeepSeek AI Analysis
+                logger.info(f"🤖 Starting AI analysis for {symbol}...")
+                analysis_input = self.prepare_analysis_data(symbol, candles, oc_data, expiry)
                 
-                # Rate limit साठी थांबतो (3 seconds per request as per Dhan)
-                await asyncio.sleep(3)
-                
-            except Exception as e:
-                logger.error(f"Error processing {symbol}: {e}")
-                await asyncio.sleep(3)
-    
-    async def run(self):
-        """Main loop - every 5 minutes option chain + chart पाठवतो"""
-        logger.info("🚀 Bot started! Loading security IDs...")
-        
-        # Security IDs load करतो
-        success = await self.load_security_ids()
-        if not success:
-            logger.error("Failed to load security IDs. Exiting...")
-            return
-        
-        await self.send_startup_message()
-        
-        # Symbols ला batches मध्ये divide करतो (5 per batch)
-        all_symbols = list(self.security_id_map.keys())
-        batch_size = 5
-        batches = [all_symbols[i:i+batch_size] for i in range(0, len(all_symbols), batch_size)]
-        
-        logger.info(f"Total {len(all_symbols)} symbols in {len(batches)} batches")
-        
-        while self.running:
-            try:
-                timestamp = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
-                logger.info(f"\n{'='*50}")
-                logger.info(f"Starting update cycle at {timestamp}")
-                logger.info(f"{'='*50}")
-                
-                # प्रत्येक batch process करतो
-                for batch_num, batch in enumerate(batches, 1):
-                    logger.info(f"\n📦 Processing Batch {batch_num}/{len(batches)}: {batch}")
-                    await self.send_option_chain_batch(batch)
+                if analysis_input:
+                    ai_analysis = await self.get_deepseek_analysis(analysis_input)
                     
-                    # Batches मध्ये 5 second gap
-                    if batch_num < len(batches):
-                        logger.info(f"Waiting 5 seconds before next batch...")
-                        await asyncio.sleep(5)
-                
-                logger.info("\n✅ All batches completed!")
-                logger.info("⏳ Waiting 5 minutes for next cycle...\n")
-                
-                # 5 minutes wait
-                await asyncio.sleep(300)
-                
-            except KeyboardInterrupt:
-                logger.info("Bot stopped by user")
-                self.running = False
-                break
-            except Exception as e:
-                logger.error(f"Error in main loop: {e}")
-                await asyncio.sleep(60)
-    
-    async def send_startup_message(self):
-        """Bot सुरू झाल्यावर message पाठवतो"""
-        try:
-            msg = "🤖 *Dhan Option Chain Bot Started!*\n\n"
-            msg += f"📊 Tracking {len(self.security_id_map)} stocks/indices\n"
-            msg += "⏱️ Updates every 5 minutes\n"
-            msg += "📈 Features:\n"
-            msg += "  • Candlestick Charts (Last 199 candles)\n"
-            msg += "  • Option Chain: CE/PE LTP, OI, Volume\n"
-            msg += "  • Greeks & Implied Volatility\n\n"
-            msg += "✅ Powered by DhanHQ API v2\n"
-            msg += "🚂 Deployed on Railway.app\n\n"
-            msg += "_Market Hours: 9:15 AM - 3:30 PM (Mon-Fri)_"
-            
-            await self.bot.send_message(
+                    if ai_analysis:
+                        # Chart पाठवतो
+                        if chart_buf:
+                            await self.bot.send_message(
                 chat_id=TELEGRAM_CHAT_ID,
                 text=msg,
                 parse_mode='Markdown'
@@ -588,20 +620,118 @@ class DhanOptionChainBot:
 if __name__ == "__main__":
     try:
         # Environment variables check
-        if not all([TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, DHAN_CLIENT_ID, DHAN_ACCESS_TOKEN]):
-            logger.error("❌ Missing environment variables!")
-            logger.error("Please set: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, DHAN_CLIENT_ID, DHAN_ACCESS_TOKEN")
+        required_vars = {
+            'TELEGRAM_BOT_TOKEN': TELEGRAM_BOT_TOKEN,
+            'TELEGRAM_CHAT_ID': TELEGRAM_CHAT_ID,
+            'DHAN_CLIENT_ID': DHAN_CLIENT_ID,
+            'DHAN_ACCESS_TOKEN': DHAN_ACCESS_TOKEN,
+            'DEEPSEEK_API_KEY': DEEPSEEK_API_KEY
+        }
+        
+        missing_vars = [k for k, v in required_vars.items() if not v]
+        
+        if missing_vars:
+            logger.error(f"❌ Missing environment variables: {', '.join(missing_vars)}")
+            logger.error("Please set all required variables:")
+            logger.error("  - TELEGRAM_BOT_TOKEN")
+            logger.error("  - TELEGRAM_CHAT_ID")
+            logger.error("  - DHAN_CLIENT_ID")
+            logger.error("  - DHAN_ACCESS_TOKEN")
+            logger.error("  - DEEPSEEK_API_KEY")
             exit(1)
         
+        logger.info("🚀 Starting Dhan Option Chain Bot with DeepSeek AI...")
         bot = DhanOptionChainBot()
         asyncio.run(bot.run())
     except Exception as e:
         logger.error(f"Fatal error: {e}")
-        exit(1)
-
-# requirements.txt:
-# python-telegram-bot==20.7
-# requests==2.31.0
-# matplotlib==3.7.1
-# mplfinance==0.12.10b0
-# pandas==2.0.3
+        exit(1).send_photo(
+                                chat_id=TELEGRAM_CHAT_ID,
+                                photo=chart_buf,
+                                caption=f"📊 {symbol} - Last {len(candles)} Candles"
+                            )
+                            await asyncio.sleep(1)
+                        
+                        # AI Signal पाठवतो
+                        signal_msg = self.format_signal_message(symbol, ai_analysis)
+                        if signal_msg:
+                            await self.bot.send_message(
+                                chat_id=TELEGRAM_CHAT_ID,
+                                text=signal_msg,
+                                parse_mode='Markdown'
+                            )
+                            logger.info(f"✅ {symbol} AI signal sent: {ai_analysis.get('signal')}")
+                    else:
+                        logger.warning(f"{symbol}: AI analysis failed")
+                else:
+                    logger.warning(f"{symbol}: Analysis data preparation failed")
+                
+                # Rate limit
+                await asyncio.sleep(5)
+                
+            except Exception as e:
+                logger.error(f"Error processing {symbol}: {e}")
+                await asyncio.sleep(3)
+    
+    async def run(self):
+        """Main loop - every 5 minutes option analysis + signals"""
+        logger.info("🚀 Bot started with DeepSeek AI! Loading security IDs...")
+        
+        success = await self.load_security_ids()
+        if not success:
+            logger.error("Failed to load security IDs. Exiting...")
+            return
+        
+        await self.send_startup_message()
+        
+        all_symbols = list(self.security_id_map.keys())
+        batch_size = 5
+        batches = [all_symbols[i:i+batch_size] for i in range(0, len(all_symbols), batch_size)]
+        
+        logger.info(f"Total {len(all_symbols)} symbols in {len(batches)} batches")
+        
+        while self.running:
+            try:
+                timestamp = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
+                logger.info(f"\n{'='*50}")
+                logger.info(f"Starting AI analysis cycle at {timestamp}")
+                logger.info(f"{'='*50}")
+                
+                for batch_num, batch in enumerate(batches, 1):
+                    logger.info(f"\n📦 Processing Batch {batch_num}/{len(batches)}: {batch}")
+                    await self.send_option_chain_batch(batch)
+                    
+                    if batch_num < len(batches):
+                        logger.info(f"Waiting 5 seconds before next batch...")
+                        await asyncio.sleep(5)
+                
+                logger.info("\n✅ All batches completed!")
+                logger.info("⏳ Waiting 5 minutes for next cycle...\n")
+                
+                await asyncio.sleep(300)
+                
+            except KeyboardInterrupt:
+                logger.info("Bot stopped by user")
+                self.running = False
+                break
+            except Exception as e:
+                logger.error(f"Error in main loop: {e}")
+                await asyncio.sleep(60)
+    
+    async def send_startup_message(self):
+        """Bot सुरू झाल्यावर message"""
+        try:
+            msg = "🤖 *Dhan Option Chain Bot with DeepSeek AI Started!*\n\n"
+            msg += f"📊 Tracking {len(self.security_id_map)} stocks/indices\n"
+            msg += "⏱️ Updates every 5 minutes\n"
+            msg += "🤖 AI-Powered Features:\n"
+            msg += "  • DeepSeek V3 Analysis\n"
+            msg += "  • CE/PE Buy Signals\n"
+            msg += "  • Entry/Target/Stoploss\n"
+            msg += "  • Candlestick Charts (50 candles)\n"
+            msg += "  • Option Chain + Greeks\n\n"
+            msg += "✅ Powered by DhanHQ + DeepSeek AI\n"
+            msg += "🚂 Deployed on Railway.app\n\n"
+            msg += "_Market Hours: 9:15 AM - 3:30 PM (Mon-Fri)_"
+            
+            await self.bot
