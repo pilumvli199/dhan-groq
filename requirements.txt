@@ -1,6 +1,23 @@
-python-telegram-bot==20.7
+# ============================================================================
+# SMART MONEY F&O TRADING BOT - REQUIREMENTS.TXT
+# ============================================================================
+
+# Core Dependencies
 requests==2.31.0
-matplotlib==3.9.0
-mplfinance==0.12.10b0
-pandas==2.2.3
-numpy==2.0.0
+redis==5.0.0
+python-dotenv==1.0.0
+
+# Telegram
+python-telegram-bot==20.7
+
+# Data & Visualization
+numpy==1.24.0
+matplotlib==3.8.0
+Pillow==10.0.0
+
+# Async
+asyncio-contextmanager==1.0.0
+
+# Optional: For production deployment
+gunicorn==21.2.0
+python-dateutil==2.8.2
