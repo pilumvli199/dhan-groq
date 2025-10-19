@@ -1,19 +1,9 @@
 """
-🤖 SMART MONEY F&O TRADING BOT - FULL VERSION
+🤖 SMART MONEY F&O TRADING BOT - FIXED VERSION
 Complete integration: Dhan API + DeepSeek AI + Auto Expiry Selection
 
-Features:
-✓ Auto nearest expiry selection
-✓ Historical 5-min candles (last 5 days)
-✓ Option chain data with Greeks
-✓ Smart Money analysis (OI, PCR, Volume)
-✓ Pattern detection (10 patterns)
-✓ DeepSeek AI reasoning
-✓ Text + PNG chart alerts on Telegram
-✓ Multi-stock/index support
-
 Author: Trading Bot Team
-Version: 2.0
+Version: 2.1 - FIXED STARTUP BUG
 """
 
 import asyncio
@@ -28,6 +18,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional
 import logging
+import traceback
 
 # Matplotlib imports
 import matplotlib
@@ -104,17 +95,19 @@ class DhanAPI:
             'Accept': 'application/json'
         }
         self.security_id_map = {}
+        logger.info("✅ DhanAPI initialized")
     
     async def load_security_ids(self):
         """Load security IDs from Dhan CSV"""
         try:
-            logger.info("Loading security IDs from Dhan...")
+            logger.info("📥 Loading security IDs from Dhan CSV...")
             response = requests.get(Config.DHAN_INSTRUMENTS_URL, timeout=30)
             
             if response.status_code != 200:
-                logger.error(f"Failed to load instruments: {response.status_code}")
+                logger.error(f"❌ Failed to load instruments: HTTP {response.status_code}")
                 return False
             
+            logger.info(f"✅ CSV downloaded successfully ({len(response.text)} bytes)")
             csv_data = response.text.split('\n')
             
             for symbol, info in Config.SYMBOLS.items():
@@ -153,17 +146,18 @@ class DhanAPI:
                                     }
                                     logger.info(f"✅ {symbol}: Security ID = {sec_id}")
                                     break
-                    except Exception:
+                    except Exception as e:
                         continue
                 
                 # Reset reader
                 csv_data = response.text.split('\n')
             
-            logger.info(f"✅ Total {len(self.security_id_map)} securities loaded")
+            logger.info(f"🎯 Total {len(self.security_id_map)} securities loaded successfully!")
             return True
             
         except Exception as e:
             logger.error(f"❌ Error loading security IDs: {e}")
+            logger.error(traceback.format_exc())
             return False
     
     def get_nearest_expiry(self, security_id: int, segment: str) -> Optional[str]:
@@ -186,7 +180,7 @@ class DhanAPI:
                 if data.get('status') == 'success' and data.get('data'):
                     expiries = data['data']
                     if expiries:
-                        nearest = expiries[0]  # पहिला expiry = nearest
+                        nearest = expiries[0]
                         logger.info(f"✅ Nearest expiry: {nearest}")
                         return nearest
             
@@ -199,7 +193,6 @@ class DhanAPI:
     def get_historical_candles(self, security_id: int, segment: str, symbol: str) -> Optional[pd.DataFrame]:
         """Get last 5 days of 5-minute candles"""
         try:
-            # Exchange segment
             if segment == "IDX_I":
                 exch_seg = "IDX_I"
                 instrument = "INDEX"
@@ -207,7 +200,6 @@ class DhanAPI:
                 exch_seg = "NSE_EQ"
                 instrument = "EQUITY"
             
-            # Date range
             to_date = datetime.now()
             from_date = to_date - timedelta(days=7)
             
@@ -490,7 +482,6 @@ JSON मध्ये answer:
             result = response.json()
             content = result['choices'][0]['message']['content']
             
-            # Extract JSON
             import re
             json_match = re.search(r'\{.*\}', content, re.DOTALL)
             if json_match:
@@ -519,13 +510,11 @@ class ChartGenerator:
             if len(df) < 2:
                 return None
             
-            # Prepare DataFrame
             chart_df = df.copy()
             chart_df.set_index('timestamp', inplace=True)
             chart_df = chart_df[['open', 'high', 'low', 'close', 'volume']]
             chart_df.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
             
-            # Style
             mc = mpf.make_marketcolors(
                 up='#26a69a',
                 down='#ef5350',
@@ -544,16 +533,14 @@ class ChartGenerator:
                 y_on_right=False
             )
             
-            # Add horizontal lines for S/R
             hlines = []
             if support:
                 hlines.append(support)
             if resistance:
                 hlines.append(resistance)
             
-            # Create chart
             fig, axes = mpf.plot(
-                chart_df.tail(100),  # Last 100 candles
+                chart_df.tail(100),
                 type='candle',
                 style=s,
                 volume=True,
@@ -566,7 +553,6 @@ class ChartGenerator:
                 tight_layout=True
             )
             
-            # Customize
             axes[0].set_title(
                 f'{symbol} | Spot: ₹{spot_price:,.2f} | Patterns: {len(patterns)}',
                 color='white',
@@ -584,7 +570,6 @@ class ChartGenerator:
                 ax.xaxis.label.set_color('white')
                 ax.yaxis.label.set_color('white')
             
-            # Save to buffer
             buf = io.BytesIO()
             fig.savefig(buf, format='png', dpi=100, bbox_inches='tight', facecolor='#1e1e1e')
             buf.seek(0)
@@ -605,9 +590,11 @@ class SmartMoneyBot:
     """Main Trading Bot"""
     
     def __init__(self):
+        logger.info("🔧 Initializing SmartMoneyBot...")
         self.bot = Bot(token=Config.TELEGRAM_BOT_TOKEN)
         self.dhan = DhanAPI()
         self.running = True
+        logger.info("✅ SmartMoneyBot initialized")
     
     def is_market_open(self) -> bool:
         """Check if market is open"""
@@ -615,11 +602,13 @@ class SmartMoneyBot:
         current_time = now.strftime("%H:%M")
         
         if now.weekday() >= 5:
+            logger.info(f"📅 Weekend: Market closed")
             return False
         
         if Config.MARKET_OPEN <= current_time <= Config.MARKET_CLOSE:
             return True
         
+        logger.info(f"⏰ Outside market hours: {current_time}")
         return False
     
     async def scan_symbol(self, symbol: str, info: Dict):
@@ -632,7 +621,6 @@ class SmartMoneyBot:
             logger.info(f"🔍 Scanning: {symbol}")
             logger.info(f"{'='*50}")
             
-            # 1. Get nearest expiry
             expiry = self.dhan.get_nearest_expiry(security_id, segment)
             if not expiry:
                 logger.warning(f"⚠️ {symbol}: No expiry found")
@@ -640,13 +628,11 @@ class SmartMoneyBot:
             
             logger.info(f"📅 Expiry: {expiry}")
             
-            # 2. Get historical candles
             candles_df = self.dhan.get_historical_candles(security_id, segment, symbol)
             if candles_df is None or len(candles_df) < 20:
                 logger.warning(f"⚠️ {symbol}: Insufficient candle data")
                 return
             
-            # 3. Get option chain
             option_chain = self.dhan.get_option_chain(security_id, segment, expiry)
             if not option_chain:
                 logger.warning(f"⚠️ {symbol}: No option chain data")
@@ -654,13 +640,11 @@ class SmartMoneyBot:
             
             spot_price = option_chain.get('last_price', 0)
             
-            # 4. Analyze
             patterns = PatternDetector.detect_patterns(candles_df)
             support, resistance = SmartMoneyAnalyzer.calculate_support_resistance(candles_df)
             oi_analysis = SmartMoneyAnalyzer.analyze_oi(option_chain)
             volume_ratio = SmartMoneyAnalyzer.calculate_volume_ratio(candles_df)
             
-            # 5. Calculate confluence
             confluence = len(patterns)
             if support and resistance:
                 confluence += 1
@@ -670,7 +654,6 @@ class SmartMoneyBot:
                 confluence += 1
             confluence = min(confluence + 4, 10)
             
-            # 6. Prepare context for AI
             context = {
                 'symbol': symbol,
                 'spot_price': spot_price,
@@ -683,24 +666,20 @@ class SmartMoneyBot:
                 'confluence_score': confluence
             }
             
-            # 7. Get AI analysis
             analysis = DeepSeekAnalyzer.analyze(context)
             
             if not analysis:
                 logger.warning(f"⚠️ {symbol}: No AI analysis")
                 return
             
-            # 8. Check confidence threshold
             if analysis['confidence'] < Config.CONFIDENCE_THRESHOLD:
                 logger.info(f"⏸️ {symbol}: Confidence too low ({analysis['confidence']}%)")
                 return
             
-            # 9. Generate chart
             chart_buf = ChartGenerator.create_chart(
                 candles_df, symbol, spot_price, support, resistance, patterns
             )
             
-            # 10. Prepare message
             signal_emoji = "🟢" if analysis['signal'] == "BUY" else "🔴" if analysis['signal'] == "SELL" else "⚪"
             
             message = f"""
@@ -734,7 +713,6 @@ class SmartMoneyBot:
 ⚡ Disclaimer: Trade at your own risk.
 """
             
-            # 11. Send alert (Chart first, then message)
             if chart_buf:
                 await self.bot.send_photo(
                     chat_id=Config.TELEGRAM_CHAT_ID,
@@ -754,24 +732,86 @@ class SmartMoneyBot:
             
         except Exception as e:
             logger.error(f"❌ Error scanning {symbol}: {e}")
+            logger.error(traceback.format_exc())
+    
+    async def send_startup_message(self):
+        """Send startup notification"""
+        try:
+            logger.info("📤 Sending startup message to Telegram...")
+            msg = f"""
+🤖 <b>Smart Money Bot Started!</b>
+
+📊 Tracking: {len(self.dhan.security_id_map)} symbols
+⏰ Scan Interval: {Config.SCAN_INTERVAL//60} minutes
+🎯 Confidence Threshold: {Config.CONFIDENCE_THRESHOLD}%
+⏱️ Market Hours: {Config.MARKET_OPEN} - {Config.MARKET_CLOSE}
+
+🔍 <b>Features:</b>
+✓ Auto nearest expiry selection
+✓ Historical 5-min candles analysis
+✓ Smart Money Concepts (OI, PCR, Volume)
+✓ 10 Candlestick patterns detection
+✓ DeepSeek V3 AI reasoning
+✓ Text + PNG chart alerts
+
+📈 <b>Symbols:</b>
+{', '.join(self.dhan.security_id_map.keys())}
+
+⚡ Powered by: DhanHQ API + DeepSeek AI
+🚂 Status: <b>ACTIVE</b> ✅
+⏰ Startup: {datetime.now().strftime('%Y-%m-%d %H:%M:%S IST')}
+"""
+            
+            await self.bot.send_message(
+                chat_id=Config.TELEGRAM_CHAT_ID,
+                text=msg,
+                parse_mode='HTML'
+            )
+            logger.info("✅ Startup message sent to Telegram successfully!")
+        except Exception as e:
+            logger.error(f"❌ Startup message error: {e}")
+            logger.error(traceback.format_exc())
     
     async def run(self):
         """Main bot loop"""
-        logger.info("🚀 Smart Money Bot Starting...")
+        logger.info("="*60)
+        logger.info("🚀 SMART MONEY BOT STARTING...")
+        logger.info("="*60)
+        
+        # Validate credentials
+        logger.info("🔐 Validating API credentials...")
+        if not all([Config.TELEGRAM_BOT_TOKEN, Config.TELEGRAM_CHAT_ID, 
+                    Config.DHAN_CLIENT_ID, Config.DHAN_ACCESS_TOKEN, Config.DEEPSEEK_API_KEY]):
+            logger.error("❌ Missing API credentials! Check environment variables:")
+            logger.error(f"   - TELEGRAM_BOT_TOKEN: {'✅' if Config.TELEGRAM_BOT_TOKEN else '❌'}")
+            logger.error(f"   - TELEGRAM_CHAT_ID: {'✅' if Config.TELEGRAM_CHAT_ID else '❌'}")
+            logger.error(f"   - DHAN_CLIENT_ID: {'✅' if Config.DHAN_CLIENT_ID else '❌'}")
+            logger.error(f"   - DHAN_ACCESS_TOKEN: {'✅' if Config.DHAN_ACCESS_TOKEN else '❌'}")
+            logger.error(f"   - DEEPSEEK_API_KEY: {'✅' if Config.DEEPSEEK_API_KEY else '❌'}")
+            return
+        
+        logger.info("✅ All credentials validated!")
         
         # Load security IDs
+        logger.info("📥 Loading security IDs from Dhan...")
         success = await self.dhan.load_security_ids()
         if not success:
             logger.error("❌ Failed to load securities. Exiting...")
             return
         
+        logger.info(f"✅ Loaded {len(self.dhan.security_id_map)} securities successfully!")
+        
         # Send startup message
         await self.send_startup_message()
+        
+        logger.info("="*60)
+        logger.info("🎯 Bot is now RUNNING! Waiting for market hours...")
+        logger.info("="*60)
         
         while self.running:
             try:
                 if not self.is_market_open():
-                    logger.info("😴 Market closed. Sleeping...")
+                    logger.info("😴 Market closed. Sleeping for 60 seconds...")
                     await asyncio.sleep(60)
                     continue
                 
@@ -793,39 +833,42 @@ class SmartMoneyBot:
                 break
             except Exception as e:
                 logger.error(f"❌ Main loop error: {e}")
+                logger.error(traceback.format_exc())
                 await asyncio.sleep(60)
+
+
+# ========================
+# MAIN ENTRY POINT
+# ========================
+async def main():
+    """Main entry point"""
+    try:
+        logger.info("="*60)
+        logger.info("🚀 INITIALIZING SMART MONEY BOT v2.1")
+        logger.info("="*60)
+        
+        bot = SmartMoneyBot()
+        await bot.run()
+        
+    except Exception as e:
+        logger.error(f"❌ Fatal error: {e}")
+        logger.error(traceback.format_exc())
+    finally:
+        logger.info("="*60)
+        logger.info("👋 Bot shutdown complete")
+        logger.info("="*60)
+
+
+if __name__ == "__main__":
+    logger.info("="*60)
+    logger.info("🎬 STARTING BOT...")
+    logger.info(f"⏰ Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S IST')}")
+    logger.info("="*60)
     
-    async def send_startup_message(self):
-        """Send startup notification"""
-        try:
-            msg = f"""
-🤖 <b>Smart Money Bot Started!</b>
-
-📊 Tracking: {len(self.dhan.security_id_map)} symbols
-⏰ Scan Interval: {Config.SCAN_INTERVAL//60} minutes
-🎯 Confidence Threshold: {Config.CONFIDENCE_THRESHOLD}%
-⏱️ Market Hours: {Config.MARKET_OPEN} - {Config.MARKET_CLOSE}
-
-🔍 <b>Features:</b>
-✓ Auto nearest expiry selection
-✓ Historical 5-min candles analysis
-✓ Smart Money Concepts (OI, PCR, Volume)
-✓ 10 Candlestick patterns detection
-✓ DeepSeek V3 AI reasoning
-✓ Text + PNG chart alerts
-
-📈 <b>Symbols:</b>
-{', '.join(self.dhan.security_id_map.keys())}
-
-⚡ Powered by: DhanHQ API + DeepSeek AI
-🚂 Status: <b>ACTIVE</b>
-"""
-            
-            await self.bot.send_message(
-                chat_id=Config.TELEGRAM_CHAT_ID,
-                text=msg,
-                parse_mode='HTML'
-            )
-            logger.info("✅ Startup message sent")
-        except Exception as e:
-            logger.error(f"❌ Startup message error: {e}")
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("\n🛑 Shutdown by user (Ctrl+C)")
+    except Exception as e:
+        logger.error(f"\n❌ Critical error: {e}")
+        logger.error(traceback.format_exc())
