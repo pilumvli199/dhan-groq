@@ -981,7 +981,7 @@ class AdvancedFOBot:
     async def send_trading_alert(self, symbol: str, spot_price: float, chart_data: Dict, 
                                 oi_data: Dict, oi_comparison: Dict, analysis: Dict, 
                                 expiry: str, chart_image: BytesIO):
-        """Send trading alert with chart image"""
+        """Send trading alert with chart image - FIXED FOR TELEGRAM LIMITS"""
         try:
             # Signal emoji
             if analysis['opportunity'] == "PE_BUY":
@@ -994,6 +994,45 @@ class AdvancedFOBot:
                 signal_emoji = "⚪"
                 signal_text = "WAIT"
             
+            symbol_safe = self.escape_html(symbol)
+            spot_safe = self.escape_html(f"{spot_price:,.2f}")
+            expiry_safe = self.escape_html(expiry)
+            confidence_safe = self.escape_html(analysis['confidence'])
+            entry_safe = self.escape_html(analysis.get('entry_price', 100))
+            target_safe = self.escape_html(analysis.get('target', 150))
+            sl_safe = self.escape_html(analysis.get('stop_loss', 80))
+            
+            ist_time = datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%d-%b %H:%M IST')
+            
+            # SHORT caption for photo (under 1024 chars limit)
+            short_caption = f"""
+🚀 <b>{symbol_safe} SIGNAL</b>
+
+{signal_emoji} <b>{signal_text}</b>
+💪 Confidence: <b>{confidence_safe}%</b>
+💰 Spot: Rs {spot_safe}
+
+🎯 <b>TRADE SETUP:</b>
+Entry: Rs {entry_safe}
+Target: Rs {target_safe}
+Stop-Loss: Rs {sl_safe}
+Expiry: {expiry_safe}
+
+⏰ {ist_time}
+📊 Trend: {chart_data['trend']}
+
+⚡ Full details below 👇
+"""
+            
+            # Send chart with SHORT caption
+            if chart_image:
+                await self.bot.send_photo(
+                    chat_id=Config.TELEGRAM_CHAT_ID,
+                    photo=chart_image,
+                    caption=short_caption,
+                    parse_mode='HTML'
+                )
+            
             # Build OI change text
             oi_change_text = ""
             if oi_comparison.get('deltas'):
@@ -1005,16 +1044,6 @@ class AdvancedFOBot:
             else:
                 oi_change_text = "First scan or no options data"
             
-            # Escape all dynamic values
-            symbol_safe = self.escape_html(symbol)
-            spot_safe = self.escape_html(f"{spot_price:,.2f}")
-            expiry_safe = self.escape_html(expiry)
-            confidence_safe = self.escape_html(analysis['confidence'])
-            entry_safe = self.escape_html(analysis.get('entry_price', 100))
-            target_safe = self.escape_html(analysis.get('target', 150))
-            sl_safe = self.escape_html(analysis.get('stop_loss', 80))
-            lots_safe = self.escape_html(analysis.get('quantity_lots', 1))
-            
             # Format support/resistance zones safely
             support_str = ", ".join([f"Rs{s}" for s in chart_data['support_zones'][:2]]) if chart_data['support_zones'] else 'N/A'
             resist_str = ", ".join([f"Rs{r}" for r in chart_data['resistance_zones'][:2]]) if chart_data['resistance_zones'] else 'N/A'
@@ -1024,40 +1053,26 @@ class AdvancedFOBot:
             resist_safe = self.escape_html(resist_str)
             patterns_safe = self.escape_html(patterns_str)
             
-            reasoning_safe = self.escape_html(analysis.get('reasoning', 'Combined analysis'))
-            marathi_safe = self.escape_html(analysis.get('marathi_explanation', 'तांत्रिक विश्लेषण'))
+            reasoning_safe = self.escape_html(analysis.get('reasoning', 'Combined analysis')[:300])  # Limit length
+            marathi_safe = self.escape_html(analysis.get('marathi_explanation', 'विश्लेषण')[:300])  # Limit length
             oi_change_safe = self.escape_html(oi_change_text)
             
-            ist_time = datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%d-%b %H:%M IST')
-            
-            message = f"""
-🚀 <b>NIFTY 50 STOCK SIGNAL</b>
-
-📊 Symbol: <b>{symbol_safe}</b>
-💰 Spot: Rs {spot_safe}
-📅 Expiry: {expiry_safe}
-⏰ Time: {ist_time}
-
-{signal_emoji} <b>OPPORTUNITY: {signal_text}</b>
-💪 Confidence: <b>{confidence_safe}%</b>
-
-🎯 <b>TRADE SETUP:</b>
-Entry: Rs {entry_safe}
-Target: Rs {target_safe}
-Stop-Loss: Rs {sl_safe}
-Quantity: {lots_safe} Lot(s)
+            # DETAILED message (separate from photo)
+            detailed_message = f"""
+📊 <b>DETAILED ANALYSIS - {symbol_safe}</b>
 
 📈 <b>CHART ANALYSIS:</b>
-Trend: {chart_data['trend']}
-Support: {support_safe}
-Resistance: {resist_safe}
-Patterns: {patterns_safe}
+• Trend: {chart_data['trend']}
+• Trendline: {chart_data['trendline_trend']}
+• Support: {support_safe}
+• Resistance: {resist_safe}
+• Patterns: {patterns_safe}
 
 ⛓️ <b>OPTION CHAIN:</b>
-PCR: {oi_data['pcr']}
-Max CE Strike: {oi_data['max_ce_strike']}
-Max PE Strike: {oi_data['max_pe_strike']}
-Max Pain: Rs {oi_data['max_pain']}
+• PCR: {oi_data['pcr']}
+• Max CE: {oi_data['max_ce_strike']} ({oi_data['max_ce_oi']:,} OI)
+• Max PE: {oi_data['max_pe_strike']} ({oi_data['max_pe_oi']:,} OI)
+• Max Pain: Rs {oi_data['max_pain']}
 
 📊 <b>OI CHANGES:</b>
 {oi_change_safe}
@@ -1068,25 +1083,16 @@ Max Pain: Rs {oi_data['max_pain']}
 📝 <b>मराठी:</b>
 {marathi_safe}
 
-⚡ <b>Disclaimer:</b> AI-generated. Trade at your own risk.
-🤖 Powered by: DeepSeek V3
+⚡ <b>Disclaimer:</b> AI-generated. Trade at own risk.
+🤖 DeepSeek V3 Analysis
 """
             
-            # Send chart image with caption
-            if chart_image:
-                await self.bot.send_photo(
-                    chat_id=Config.TELEGRAM_CHAT_ID,
-                    photo=chart_image,
-                    caption=message,
-                    parse_mode='HTML'
-                )
-            else:
-                # Fallback to text only if chart failed
-                await self.bot.send_message(
-                    chat_id=Config.TELEGRAM_CHAT_ID,
-                    text=message,
-                    parse_mode='HTML'
-                )
+            # Send detailed message separately
+            await self.bot.send_message(
+                chat_id=Config.TELEGRAM_CHAT_ID,
+                text=detailed_message,
+                parse_mode='HTML'
+            )
             
             logger.info("✅ Trading alert sent to Telegram!")
             
