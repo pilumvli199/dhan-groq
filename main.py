@@ -8,9 +8,11 @@ Scans all 50 NIFTY stocks every 15 minutes
 ✅ Redis Caching for OI comparison
 ✅ PE/CE Buy Opportunity Detection
 ✅ Chart Image Generation (White BG, Green/Red Candles)
+✅ FIXED: Telegram Photo Upload Error (600x400px @ 100 DPI)
+✅ FIXED: Proper Error Handling with Fallback
 
 Author: Advanced Trading System
-Version: 5.0 - NIFTY 50 STOCKS SCANNER
+Version: 5.0.1 - FULLY FIXED VERSION
 """
 
 import asyncio
@@ -422,7 +424,7 @@ class DhanAPI:
 
 
 # ========================
-# CHART GENERATOR
+# CHART GENERATOR - FIXED FOR TELEGRAM
 # ========================
 class ChartGenerator:
     """Generate trading charts with entry, target, SL markers"""
@@ -430,7 +432,7 @@ class ChartGenerator:
     @staticmethod
     def create_chart(df: pd.DataFrame, symbol: str, entry: float, target: float, 
                     stop_loss: float, opportunity: str) -> BytesIO:
-        """Create candlestick chart - TELEGRAM OPTIMIZED"""
+        """Create candlestick chart - TELEGRAM OPTIMIZED (FIXED)"""
         try:
             logger.info(f"📊 Generating chart for {symbol}")
             
@@ -463,8 +465,7 @@ class ChartGenerator:
                 linewidths=2
             )
             
-            # FIXED: Smaller figure size for Telegram (max 10000px total)
-            # 8x5 inches at 150 DPI = 1200x750 pixels (within Telegram limits)
+            # TELEGRAM FIX: Smaller size (6x4 @ 100 DPI = 600x400px)
             fig, axes = mpf.plot(
                 chart_df,
                 type='candle',
@@ -474,7 +475,7 @@ class ChartGenerator:
                 volume=False,
                 hlines=hlines,
                 returnfig=True,
-                figsize=(8, 5),  # Reduced from (12, 7)
+                figsize=(6, 4),  # Reduced from (8, 5)
                 tight_layout=True
             )
             
@@ -484,31 +485,32 @@ class ChartGenerator:
             
             # Position labels on right side
             ax.text(len(chart_df), entry, f' Entry: ₹{entry:.2f}', 
-                   color='blue', fontweight='bold', va='center', fontsize=9)
+                   color='blue', fontweight='bold', va='center', fontsize=8)
             ax.text(len(chart_df), target, f' Target: ₹{target:.2f}', 
-                   color='green', fontweight='bold', va='center', fontsize=9)
+                   color='green', fontweight='bold', va='center', fontsize=8)
             ax.text(len(chart_df), stop_loss, f' SL: ₹{stop_loss:.2f}', 
-                   color='red', fontweight='bold', va='center', fontsize=9)
+                   color='red', fontweight='bold', va='center', fontsize=8)
             
             # Add current price marker
             ax.axhline(y=current_price, color='orange', linestyle=':', linewidth=1.5, alpha=0.7)
             ax.text(len(chart_df), current_price, f' Now: ₹{current_price:.2f}', 
-                   color='orange', fontweight='bold', va='center', fontsize=9)
+                   color='orange', fontweight='bold', va='center', fontsize=8)
             
-            # Save to BytesIO with optimized settings
+            # Save with compression and lower DPI (FIXED)
             buf = BytesIO()
             fig.savefig(
                 buf, 
                 format='png', 
-                dpi=150,  # Good quality but not too large
+                dpi=100,  # Reduced from 150
                 bbox_inches='tight', 
                 facecolor='white',
-                pad_inches=0.1
+                pad_inches=0.05,
+                optimize=True
             )
             buf.seek(0)
             plt.close(fig)
             
-            logger.info(f"✅ Chart generated for {symbol}")
+            logger.info(f"✅ Chart generated for {symbol} (600x400px @ 100 DPI)")
             return buf
             
         except Exception as e:
@@ -974,11 +976,15 @@ class AdvancedFOBot:
                 analysis['opportunity']
             )
             
-            # Send alert with chart
-            await self.send_trading_alert(symbol, spot_price, chart_data, oi_data, 
+            # Send alert with chart (FIXED with return status)
+            alert_sent = await self.send_trading_alert(symbol, spot_price, chart_data, oi_data, 
                                          oi_comparison, analysis, expiry, chart_image)
             
-            logger.info(f"✅ {symbol}: ALERT SENT! 🎉")
+            if alert_sent:
+                logger.info(f"✅ {symbol}: ALERT SENT SUCCESSFULLY! 🎉")
+            else:
+                logger.warning(f"⚠️ {symbol}: Alert sending failed")
+            
             logger.info(f"{'='*70}\n")
             
         except Exception as e:
@@ -988,7 +994,7 @@ class AdvancedFOBot:
     async def send_trading_alert(self, symbol: str, spot_price: float, chart_data: Dict, 
                                 oi_data: Dict, oi_comparison: Dict, analysis: Dict, 
                                 expiry: str, chart_image: BytesIO):
-        """Send trading alert - COMPACT VERSION (40% compressed)"""
+        """Send trading alert - COMPACT VERSION with FIXED error handling"""
         try:
             # Signal emoji
             if analysis['opportunity'] == "PE_BUY":
@@ -1021,14 +1027,30 @@ Trend: {chart_data['trend']} | PCR: {oi_data['pcr']}
 ⏰ {ist_time} IST
 """
             
-            # Send chart with COMPACT caption
+            # Try sending chart, fallback to text if fails (FIXED)
+            photo_sent = False
             if chart_image:
-                await self.bot.send_photo(
+                try:
+                    await self.bot.send_photo(
+                        chat_id=Config.TELEGRAM_CHAT_ID,
+                        photo=chart_image,
+                        caption=short_caption.strip(),
+                        parse_mode='HTML'
+                    )
+                    photo_sent = True
+                    logger.info("✅ Chart image sent successfully")
+                except Exception as photo_error:
+                    logger.error(f"❌ Chart upload failed: {photo_error}")
+                    logger.warning("⚠️ Falling back to text-only alert")
+            
+            # If photo failed, send text alert (FALLBACK MECHANISM)
+            if not photo_sent:
+                await self.bot.send_message(
                     chat_id=Config.TELEGRAM_CHAT_ID,
-                    photo=chart_image,
-                    caption=short_caption.strip(),
+                    text=f"📊 {short_caption.strip()}\n\n⚠️ Chart generation skipped",
                     parse_mode='HTML'
                 )
+                logger.info("✅ Text alert sent (no chart)")
             
             # Build compact OI changes
             oi_summary = ""
@@ -1082,11 +1104,13 @@ CE: {oi_data['max_ce_strike']} | PE: {oi_data['max_pe_strike']}
                 parse_mode='HTML'
             )
             
-            logger.info("✅ Trading alert sent to Telegram!")
+            logger.info("✅ Complete trading alert sent to Telegram!")
+            return True  # Return success status
             
         except Exception as e:
             logger.error(f"❌ Alert sending error: {e}")
             logger.error(traceback.format_exc())
+            return False  # Return failure status
     
     async def send_startup_message(self):
         """Send startup notification"""
@@ -1097,7 +1121,7 @@ CE: {oi_data['max_ce_strike']} | PE: {oi_data['max_pe_strike']}
             redis_status = "Connected" if self.redis.redis_client else "Disconnected"
             
             msg = f"""
-🤖 <b>NIFTY 50 Trading Bot v5.0 Started!</b>
+🤖 <b>NIFTY 50 Trading Bot v5.0.1 Started!</b>
 
 📊 Tracking: <b>50 NIFTY stocks</b>
 ⏰ Scan Interval: <b>15 minutes</b>
@@ -1112,8 +1136,9 @@ CE: {oi_data['max_ce_strike']} | PE: {oi_data['max_pe_strike']}
 ✅ Option Chain Analysis
 ✅ OI Change Tracking
 ✅ DeepSeek AI Analysis
-✅ Chart Image Generation
+✅ Chart Image Generation (FIXED 600x400px)
 ✅ PE/CE Buy Signals
+✅ Error Handling with Fallback
 
 📈 <b>Loaded Stocks:</b>
 {len(self.dhan.security_id_map)}/50 stocks ready
@@ -1136,7 +1161,7 @@ CE: {oi_data['max_ce_strike']} | PE: {oi_data['max_pe_strike']}
     async def run(self):
         """Main bot loop"""
         logger.info("="*70)
-        logger.info("🚀 NIFTY 50 TRADING BOT v5.0 STARTING...")
+        logger.info("🚀 NIFTY 50 TRADING BOT v5.0.1 STARTING...")
         logger.info("="*70)
         
         # Validate credentials
@@ -1213,7 +1238,7 @@ async def main():
     """Main entry point"""
     try:
         logger.info("="*70)
-        logger.info("🚀 INITIALIZING NIFTY 50 BOT v5.0")
+        logger.info("🚀 INITIALIZING NIFTY 50 BOT v5.0.1 (FULLY FIXED)")
         logger.info("="*70)
         
         bot = AdvancedFOBot()
