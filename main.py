@@ -80,9 +80,14 @@ class Config:
     REDIS_EXPIRY = 3600
     
     # Chart Analysis Settings
-    LOOKBACK_CANDLES = 100
-    TRENDLINE_CANDLES = 50
+    LOOKBACK_CANDLES = 200  # Increased from 100
+    TRENDLINE_CANDLES = 100  # Increased from 50
     PSYCHOLOGICAL_LEVELS = [100, 250, 500, 1000]
+    
+    # S/R Detection Settings
+    SR_MIN_DISTANCE = 0.01  # 1% minimum distance from current price
+    SR_MAX_DISTANCE = 0.10  # 10% maximum distance
+    SR_CLUSTER_TOLERANCE = 0.005  # 0.5% clustering tolerance
     
     # NIFTY 50 Stocks (All 50 stocks)
     NIFTY_50_STOCKS = [
@@ -563,25 +568,73 @@ class AdvancedChartAnalyzer:
     
     @staticmethod
     def calculate_support_resistance_zones(df: pd.DataFrame) -> Tuple[List[float], List[float]]:
-        """Calculate support and resistance zones"""
-        if len(df) < 50:
+        """Calculate support and resistance zones - IMPROVED VERSION"""
+        if len(df) < 100:
             return [], []
         
-        recent = df.tail(Config.TRENDLINE_CANDLES)
+        # Use more data for better S/R detection (100 candles minimum)
+        lookback = min(200, len(df))
+        recent = df.tail(lookback)
         highs = recent['high'].values
         lows = recent['low'].values
+        current_price = recent['close'].iloc[-1]
         
+        # IMPROVED: Wider pivot detection (5 candles each side)
         resistance_levels = []
-        for i in range(2, len(highs) - 2):
-            if (highs[i] > highs[i-1] and highs[i] > highs[i-2] and
-                highs[i] > highs[i+1] and highs[i] > highs[i+2]):
+        for i in range(5, len(highs) - 5):
+            is_pivot = True
+            for j in range(1, 6):  # Check 5 candles on each side
+                if highs[i] <= highs[i-j] or highs[i] <= highs[i+j]:
+                    is_pivot = False
+                    break
+            if is_pivot:
                 resistance_levels.append(highs[i])
         
         support_levels = []
-        for i in range(2, len(lows) - 2):
-            if (lows[i] < lows[i-1] and lows[i] < lows[i-2] and
-                lows[i] < lows[i+1] and lows[i] < lows[i+2]):
+        for i in range(5, len(lows) - 5):
+            is_pivot = True
+            for j in range(1, 6):  # Check 5 candles on each side
+                if lows[i] >= lows[i-j] or lows[i] >= lows[i+j]:
+                    is_pivot = False
+                    break
+            if is_pivot:
                 support_levels.append(lows[i])
+        
+        # IMPROVED: Cluster nearby levels (within 0.5% range)
+        def cluster_levels(levels, tolerance=0.005):
+            if not levels:
+                return []
+            
+            levels = sorted(levels)
+            clustered = []
+            current_cluster = [levels[0]]
+            
+            for level in levels[1:]:
+                if abs(level - current_cluster[-1]) / current_cluster[-1] < tolerance:
+                    current_cluster.append(level)
+                else:
+                    clustered.append(np.mean(current_cluster))
+                    current_cluster = [level]
+            
+            clustered.append(np.mean(current_cluster))
+            return clustered
+        
+        resistance_levels = cluster_levels(resistance_levels)
+        support_levels = cluster_levels(support_levels)
+        
+        # IMPROVED: Filter by distance from current price (1-10% range)
+        def filter_by_distance(levels, price, min_dist=0.01, max_dist=0.10):
+            return [
+                level for level in levels
+                if min_dist <= abs(level - price) / price <= max_dist
+            ]
+        
+        resistance_levels = filter_by_distance(resistance_levels, current_price)
+        support_levels = filter_by_distance(support_levels, current_price)
+        
+        # IMPROVED: Sort and return top 3 strongest levels
+        resistance_levels = sorted(resistance_levels, reverse=True)[:3]
+        support_levels = sorted(support_levels)[:3]
         
         return support_levels, resistance_levels
     
@@ -895,10 +948,10 @@ class AdvancedFOBot:
                 logger.warning(f"⚠️ {symbol}: No expiry - checking chart only")
                 expiry = "N/A"
             
-            # Get candles
-            candles_df = self.dhan.get_historical_candles(security_id, segment, symbol, lookback_days=7)
+            # Get candles (INCREASED LOOKBACK)
+            candles_df = self.dhan.get_historical_candles(security_id, segment, symbol, lookback_days=15)
             if candles_df is None or len(candles_df) < Config.LOOKBACK_CANDLES:
-                logger.warning(f"⚠️ {symbol}: Insufficient candles - SKIP")
+                logger.warning(f"⚠️ {symbol}: Insufficient candles (need {Config.LOOKBACK_CANDLES}, got {len(candles_df) if candles_df is not None else 0}) - SKIP")
                 return
             
             spot_price = candles_df['close'].iloc[-1]
