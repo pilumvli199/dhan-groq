@@ -918,8 +918,7 @@ class ChartGenerator:
                 dpi=100,
                 bbox_inches='tight', 
                 facecolor='white',
-                pad_inches=0.05,
-                optimize=True
+                pad_inches=0.05
             )
             buf.seek(0)
             plt.close(fig)
