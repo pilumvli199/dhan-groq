@@ -1,21 +1,9 @@
-# Smart Money F&O Trading Bot - Dependencies
-# Railway.app compatible requirements
-
-# Core Dependencies
-requests==2.31.0
-python-dotenv==1.0.0
-
-# Telegram Bot
+asyncio
+requests
+numpy
+pandas
+pytz
+redis
 python-telegram-bot==20.7
-
-# Data Processing
-numpy==1.26.3
-pandas==2.1.4
-
-# Charting
-matplotlib==3.8.2
-mplfinance==0.12.10b0
-
-# Utilities
-pytz==2023.3
-python-dateutil==2.8.2
+matplotlib
+mplfinance
