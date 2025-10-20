@@ -429,12 +429,12 @@ class ChartGenerator:
     @staticmethod
     def create_chart(df: pd.DataFrame, symbol: str, entry: float, target: float, 
                     stop_loss: float, opportunity: str) -> BytesIO:
-        """Create candlestick chart with white background and markers"""
+        """Create candlestick chart - TELEGRAM OPTIMIZED"""
         try:
             logger.info(f"📊 Generating chart for {symbol}")
             
-            # Prepare data - take last 100 candles
-            chart_df = df.tail(100).copy()
+            # Take last 50 candles only for cleaner chart
+            chart_df = df.tail(50).copy()
             
             # Custom style with white background
             mc = mpf.make_marketcolors(
@@ -462,7 +462,8 @@ class ChartGenerator:
                 linewidths=2
             )
             
-            # Create figure
+            # FIXED: Smaller figure size for Telegram (max 10000px total)
+            # 8x5 inches at 150 DPI = 1200x750 pixels (within Telegram limits)
             fig, axes = mpf.plot(
                 chart_df,
                 type='candle',
@@ -472,7 +473,7 @@ class ChartGenerator:
                 volume=False,
                 hlines=hlines,
                 returnfig=True,
-                figsize=(12, 7),
+                figsize=(8, 5),  # Reduced from (12, 7)
                 tight_layout=True
             )
             
@@ -481,23 +482,28 @@ class ChartGenerator:
             current_price = chart_df['close'].iloc[-1]
             
             # Position labels on right side
-            y_offset = (chart_df['high'].max() - chart_df['low'].min()) * 0.02
-            
             ax.text(len(chart_df), entry, f' Entry: ₹{entry:.2f}', 
-                   color='blue', fontweight='bold', va='center', fontsize=10)
+                   color='blue', fontweight='bold', va='center', fontsize=9)
             ax.text(len(chart_df), target, f' Target: ₹{target:.2f}', 
-                   color='green', fontweight='bold', va='center', fontsize=10)
-            ax.text(len(chart_df), stop_loss, f' Stop Loss: ₹{stop_loss:.2f}', 
-                   color='red', fontweight='bold', va='center', fontsize=10)
+                   color='green', fontweight='bold', va='center', fontsize=9)
+            ax.text(len(chart_df), stop_loss, f' SL: ₹{stop_loss:.2f}', 
+                   color='red', fontweight='bold', va='center', fontsize=9)
             
             # Add current price marker
             ax.axhline(y=current_price, color='orange', linestyle=':', linewidth=1.5, alpha=0.7)
-            ax.text(len(chart_df), current_price, f' Current: ₹{current_price:.2f}', 
-                   color='orange', fontweight='bold', va='center', fontsize=10)
+            ax.text(len(chart_df), current_price, f' Now: ₹{current_price:.2f}', 
+                   color='orange', fontweight='bold', va='center', fontsize=9)
             
-            # Save to BytesIO
+            # Save to BytesIO with optimized settings
             buf = BytesIO()
-            fig.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor='white')
+            fig.savefig(
+                buf, 
+                format='png', 
+                dpi=150,  # Good quality but not too large
+                bbox_inches='tight', 
+                facecolor='white',
+                pad_inches=0.1
+            )
             buf.seek(0)
             plt.close(fig)
             
@@ -981,116 +987,97 @@ class AdvancedFOBot:
     async def send_trading_alert(self, symbol: str, spot_price: float, chart_data: Dict, 
                                 oi_data: Dict, oi_comparison: Dict, analysis: Dict, 
                                 expiry: str, chart_image: BytesIO):
-        """Send trading alert with chart image - FIXED FOR TELEGRAM LIMITS"""
+        """Send trading alert - COMPACT VERSION (40% compressed)"""
         try:
             # Signal emoji
             if analysis['opportunity'] == "PE_BUY":
                 signal_emoji = "🔴"
-                signal_text = "PE BUY (Bearish)"
+                signal_text = "PE BUY"
             elif analysis['opportunity'] == "CE_BUY":
                 signal_emoji = "🟢"
-                signal_text = "CE BUY (Bullish)"
+                signal_text = "CE BUY"
             else:
                 signal_emoji = "⚪"
                 signal_text = "WAIT"
             
             symbol_safe = self.escape_html(symbol)
-            spot_safe = self.escape_html(f"{spot_price:,.2f}")
-            expiry_safe = self.escape_html(expiry)
+            spot_safe = self.escape_html(f"{spot_price:.2f}")
             confidence_safe = self.escape_html(analysis['confidence'])
             entry_safe = self.escape_html(analysis.get('entry_price', 100))
             target_safe = self.escape_html(analysis.get('target', 150))
             sl_safe = self.escape_html(analysis.get('stop_loss', 80))
             
-            ist_time = datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%d-%b %H:%M IST')
+            ist_time = datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%H:%M')
             
-            # SHORT caption for photo (under 1024 chars limit)
+            # COMPACT caption (under 700 chars)
             short_caption = f"""
-🚀 <b>{symbol_safe} SIGNAL</b>
+🚀 <b>{symbol_safe}</b> {signal_emoji}
 
-{signal_emoji} <b>{signal_text}</b>
-💪 Confidence: <b>{confidence_safe}%</b>
-💰 Spot: Rs {spot_safe}
+<b>{signal_text}</b> | {confidence_safe}% | Rs {spot_safe}
+Entry: {entry_safe} | Target: {target_safe} | SL: {sl_safe}
 
-🎯 <b>TRADE SETUP:</b>
-Entry: Rs {entry_safe}
-Target: Rs {target_safe}
-Stop-Loss: Rs {sl_safe}
-Expiry: {expiry_safe}
-
-⏰ {ist_time}
-📊 Trend: {chart_data['trend']}
-
-⚡ Full details below 👇
+Trend: {chart_data['trend']} | PCR: {oi_data['pcr']}
+⏰ {ist_time} IST
 """
             
-            # Send chart with SHORT caption
+            # Send chart with COMPACT caption
             if chart_image:
                 await self.bot.send_photo(
                     chat_id=Config.TELEGRAM_CHAT_ID,
                     photo=chart_image,
-                    caption=short_caption,
+                    caption=short_caption.strip(),
                     parse_mode='HTML'
                 )
             
-            # Build OI change text
-            oi_change_text = ""
-            if oi_comparison.get('deltas'):
-                changes = oi_comparison['deltas'][:3]
-                oi_change_text = "\n".join([
-                    f"Strike {d['strike']}: CE {d['ce_oi_change']:+,} PE {d['pe_oi_change']:+,}"
-                    for d in changes
-                ])
+            # Build compact OI changes
+            oi_summary = ""
+            if oi_comparison.get('deltas') and len(oi_comparison['deltas']) > 0:
+                top_delta = oi_comparison['deltas'][0]
+                oi_summary = f"Strike {top_delta['strike']}: CE {top_delta['ce_oi_change']:+,} PE {top_delta['pe_oi_change']:+,}"
             else:
-                oi_change_text = "First scan or no options data"
+                oi_summary = "First scan"
             
-            # Format support/resistance zones safely
-            support_str = ", ".join([f"Rs{s}" for s in chart_data['support_zones'][:2]]) if chart_data['support_zones'] else 'N/A'
-            resist_str = ", ".join([f"Rs{r}" for r in chart_data['resistance_zones'][:2]]) if chart_data['resistance_zones'] else 'N/A'
-            patterns_str = ", ".join(chart_data['chart_patterns']) if chart_data['chart_patterns'] else 'None'
+            # Get first pattern only
+            pattern = chart_data['chart_patterns'][0] if chart_data['chart_patterns'] else 'None'
             
-            support_safe = self.escape_html(support_str)
-            resist_safe = self.escape_html(resist_str)
-            patterns_safe = self.escape_html(patterns_str)
+            # Compact support/resistance
+            support = f"Rs{chart_data['support_zones'][0]}" if chart_data['support_zones'] else 'N/A'
+            resist = f"Rs{chart_data['resistance_zones'][0]}" if chart_data['resistance_zones'] else 'N/A'
             
-            reasoning_safe = self.escape_html(analysis.get('reasoning', 'Combined analysis')[:300])  # Limit length
-            marathi_safe = self.escape_html(analysis.get('marathi_explanation', 'विश्लेषण')[:300])  # Limit length
-            oi_change_safe = self.escape_html(oi_change_text)
+            support_safe = self.escape_html(support)
+            resist_safe = self.escape_html(resist)
+            pattern_safe = self.escape_html(pattern)
+            oi_summary_safe = self.escape_html(oi_summary)
             
-            # DETAILED message (separate from photo)
+            # Truncate reasoning to 200 chars
+            reasoning = analysis.get('reasoning', 'Analysis')[:200]
+            reasoning_safe = self.escape_html(reasoning)
+            
+            # COMPACT detailed message (40% smaller)
             detailed_message = f"""
-📊 <b>DETAILED ANALYSIS - {symbol_safe}</b>
+📊 <b>{symbol_safe} Analysis</b>
 
-📈 <b>CHART ANALYSIS:</b>
-• Trend: {chart_data['trend']}
-• Trendline: {chart_data['trendline_trend']}
-• Support: {support_safe}
-• Resistance: {resist_safe}
-• Patterns: {patterns_safe}
+📈 <b>Chart:</b>
+Support: {support_safe} | Resist: {resist_safe}
+Pattern: {pattern_safe}
 
-⛓️ <b>OPTION CHAIN:</b>
-• PCR: {oi_data['pcr']}
-• Max CE: {oi_data['max_ce_strike']} ({oi_data['max_ce_oi']:,} OI)
-• Max PE: {oi_data['max_pe_strike']} ({oi_data['max_pe_oi']:,} OI)
-• Max Pain: Rs {oi_data['max_pain']}
+⛓️ <b>Options:</b>
+PCR {oi_data['pcr']} | MaxPain Rs{oi_data['max_pain']}
+CE: {oi_data['max_ce_strike']} | PE: {oi_data['max_pe_strike']}
 
-📊 <b>OI CHANGES:</b>
-{oi_change_safe}
+📊 <b>OI Change:</b>
+{oi_summary_safe}
 
-🧠 <b>AI REASONING:</b>
+🧠 <b>AI:</b>
 {reasoning_safe}
 
-📝 <b>मराठी:</b>
-{marathi_safe}
-
-⚡ <b>Disclaimer:</b> AI-generated. Trade at own risk.
-🤖 DeepSeek V3 Analysis
+⚡ Trade at own risk | DeepSeek V3
 """
             
-            # Send detailed message separately
+            # Send compact detailed message
             await self.bot.send_message(
                 chat_id=Config.TELEGRAM_CHAT_ID,
-                text=detailed_message,
+                text=detailed_message.strip(),
                 parse_mode='HTML'
             )
             
