@@ -75,9 +75,9 @@ class Config:
     
     # Stocks/Indices to track
     SYMBOLS = {
-        # Indices
-        "NIFTY": {"symbol": "Nifty 50", "segment": "IDX_I"},
-        "BANKNIFTY": {"symbol": "Nifty Bank", "segment": "IDX_I"},
+        # Indices - Try multiple variations
+        "NIFTY": {"symbol": "NIFTY 50", "segment": "IDX_I", "alternatives": ["Nifty 50", "NIFTY50", "NIFTY"]},
+        "BANKNIFTY": {"symbol": "NIFTY BANK", "segment": "IDX_I", "alternatives": ["Nifty Bank", "NIFTYBANK", "BANKNIFTY"]},
         
         # Top Stocks
         "RELIANCE": {"symbol": "RELIANCE", "segment": "NSE_EQ"},
@@ -244,23 +244,26 @@ class DhanAPI:
             for symbol, info in Config.SYMBOLS.items():
                 segment = info['segment']
                 symbol_name = info['symbol']
+                alternatives = info.get('alternatives', [symbol_name])
                 
-                logger.info(f"🔍 Looking for: {symbol} (CSV name: {symbol_name})")
+                logger.info(f"🔍 Looking for: {symbol} (trying: {alternatives})")
                 
                 found = False
                 for row in all_rows:
                     try:
                         if segment == "IDX_I":
+                            # Try all alternative names
+                            trading_symbol = row.get('SEM_TRADING_SYMBOL', '')
                             if (row.get('SEM_SEGMENT') == 'I' and 
-                                row.get('SEM_TRADING_SYMBOL') == symbol_name):
+                                trading_symbol in alternatives):
                                 sec_id = row.get('SEM_SMST_SECURITY_ID')
                                 if sec_id:
                                     self.security_id_map[symbol] = {
                                         'security_id': int(sec_id),
                                         'segment': segment,
-                                        'trading_symbol': symbol_name
+                                        'trading_symbol': trading_symbol
                                     }
-                                    logger.info(f"✅ {symbol}: Security ID = {sec_id}")
+                                    logger.info(f"✅ {symbol}: Security ID = {sec_id} (matched: {trading_symbol})")
                                     found = True
                                     break
                         else:
@@ -281,7 +284,7 @@ class DhanAPI:
                         continue
                 
                 if not found:
-                    logger.warning(f"⚠️ {symbol} ({symbol_name}): NOT FOUND in CSV")
+                    logger.warning(f"⚠️ {symbol}: NOT FOUND in CSV (tried: {alternatives})")
             
             logger.info(f"🎯 Total {len(self.security_id_map)}/{len(Config.SYMBOLS)} securities loaded!")
             return len(self.security_id_map) > 0
@@ -358,24 +361,54 @@ class DhanAPI:
             if response.status_code == 200:
                 data = response.json()
                 
+                # Check if data has required keys
                 if 'open' in data and 'close' in data:
+                    # Get all arrays
+                    timestamps = data.get('start_Time', [])
+                    opens = data.get('open', [])
+                    highs = data.get('high', [])
+                    lows = data.get('low', [])
+                    closes = data.get('close', [])
+                    volumes = data.get('volume', [])
+                    
+                    # Find minimum length (Dhan API sometimes returns mismatched arrays)
+                    min_length = min(
+                        len(timestamps),
+                        len(opens),
+                        len(highs),
+                        len(lows),
+                        len(closes),
+                        len(volumes)
+                    )
+                    
+                    if min_length == 0:
+                        logger.warning(f"⚠️ {symbol}: Empty arrays in API response")
+                        return None
+                    
+                    logger.info(f"📊 {symbol}: Array lengths - timestamps:{len(timestamps)}, OHLC:{len(opens)}, using min:{min_length}")
+                    
+                    # Trim all arrays to same length
                     df = pd.DataFrame({
-                        'timestamp': pd.to_datetime(data.get('start_Time', [])),
-                        'open': data.get('open', []),
-                        'high': data.get('high', []),
-                        'low': data.get('low', []),
-                        'close': data.get('close', []),
-                        'volume': data.get('volume', [])
+                        'timestamp': pd.to_datetime(timestamps[:min_length]),
+                        'open': opens[:min_length],
+                        'high': highs[:min_length],
+                        'low': lows[:min_length],
+                        'close': closes[:min_length],
+                        'volume': volumes[:min_length]
                     })
                     
-                    logger.info(f"✅ {symbol}: Fetched {len(df)} candles")
+                    # Remove any NaN rows
+                    df = df.dropna()
+                    
+                    logger.info(f"✅ {symbol}: Fetched {len(df)} clean candles")
                     return df
             
-            logger.warning(f"⚠️ {symbol}: No candle data")
+            logger.warning(f"⚠️ {symbol}: No candle data (HTTP {response.status_code})")
             return None
             
         except Exception as e:
             logger.error(f"❌ Error fetching candles for {symbol}: {e}")
+            logger.error(traceback.format_exc())
             return None
     
     def get_option_chain(self, security_id: int, segment: str, expiry: str, symbol: str) -> Optional[Dict]:
