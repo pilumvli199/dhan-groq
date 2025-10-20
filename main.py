@@ -19,6 +19,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional
 import logging
 import traceback
+import pytz
 
 # Matplotlib imports
 import matplotlib
@@ -597,18 +598,25 @@ class SmartMoneyBot:
         logger.info("✅ SmartMoneyBot initialized")
     
     def is_market_open(self) -> bool:
-        """Check if market is open"""
-        now = datetime.now()
-        current_time = now.strftime("%H:%M")
+        """Check if market is open (IST timezone)"""
+        from pytz import timezone
         
-        if now.weekday() >= 5:
-            logger.info(f"📅 Weekend: Market closed")
+        # Get IST time
+        ist = timezone('Asia/Kolkata')
+        now_ist = datetime.now(ist)
+        current_time = now_ist.strftime("%H:%M")
+        
+        # Check weekend
+        if now_ist.weekday() >= 5:
+            logger.info(f"📅 Weekend: Market closed (IST: {current_time})")
             return False
         
+        # Check market hours
         if Config.MARKET_OPEN <= current_time <= Config.MARKET_CLOSE:
+            logger.info(f"✅ Market OPEN (IST: {current_time})")
             return True
         
-        logger.info(f"⏰ Outside market hours: {current_time}")
+        logger.info(f"⏰ Market closed - Outside hours (IST: {current_time})")
         return False
     
     async def scan_symbol(self, symbol: str, info: Dict):
@@ -688,7 +696,7 @@ class SmartMoneyBot:
 📊 Symbol: <b>{symbol}</b>
 💰 Spot: ₹{spot_price:,.2f}
 📅 Expiry: {expiry}
-⏰ Time: {datetime.now().strftime('%H:%M:%S IST')}
+⏰ Time: {datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%H:%M:%S IST')}
 
 {signal_emoji} Signal: <b>{analysis['signal']}</b>
 💪 Confidence: <b>{analysis['confidence']}%</b>
@@ -759,7 +767,7 @@ class SmartMoneyBot:
 
 ⚡ Powered by: DhanHQ API + DeepSeek AI
 🚂 Status: <b>ACTIVE</b> ✅
-⏰ Startup: {datetime.now().strftime('%Y-%m-%d %H:%M:%S IST')}
+⏰ Startup: {datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%Y-%m-%d %H:%M:%S IST')}
 """
             
             await self.bot.send_message(
@@ -816,7 +824,7 @@ class SmartMoneyBot:
                     continue
                 
                 logger.info(f"\n{'='*60}")
-                logger.info(f"🔄 Starting scan cycle at {datetime.now().strftime('%H:%M:%S')}")
+                logger.info(f"🔄 Starting scan cycle at {datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%H:%M:%S IST')}")
                 logger.info(f"{'='*60}")
                 
                 # Scan each symbol
@@ -860,9 +868,10 @@ async def main():
 
 
 if __name__ == "__main__":
+    ist = pytz.timezone('Asia/Kolkata')
     logger.info("="*60)
     logger.info("🎬 STARTING BOT...")
-    logger.info(f"⏰ Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S IST')}")
+    logger.info(f"⏰ IST Timestamp: {datetime.now(ist).strftime('%Y-%m-%d %H:%M:%S IST')}")
     logger.info("="*60)
     
     try:
