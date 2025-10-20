@@ -811,10 +811,41 @@ class DeepSeekAnalyzer:
     """DeepSeek V3 Combined Analysis"""
     
     @staticmethod
-    def analyze_combined(chart_data: Dict, oi_data: Dict, oi_comparison: Dict) -> Optional[Dict]:
-        """Combined Chart + OI analysis"""
+    def analyze_combined(chart_data: Dict, oi_data: Dict, oi_comparison: Dict, 
+                        candle_data: pd.DataFrame) -> Optional[Dict]:
+        """Combined Chart + OI analysis with 3-day candle data"""
         try:
-            logger.info("🤖 DeepSeek: Analyzing Chart + OI data...")
+            logger.info("🤖 DeepSeek: Analyzing Chart + OI + Candles...")
+            
+            # Prepare last 3 days (last 50 candles) data for AI
+            recent_candles = candle_data.tail(50).copy()
+            
+            # Format candle data as string (last 10 candles for pattern)
+            last_10_candles = recent_candles.tail(10)
+            candle_summary = []
+            for idx, row in last_10_candles.iterrows():
+                candle_type = "🟢 Bullish" if row['close'] > row['open'] else "🔴 Bearish"
+                body_size = abs(row['close'] - row['open'])
+                wick_upper = row['high'] - max(row['open'], row['close'])
+                wick_lower = min(row['open'], row['close']) - row['low']
+                
+                candle_summary.append(
+                    f"{candle_type} | O:{row['open']:.1f} H:{row['high']:.1f} "
+                    f"L:{row['low']:.1f} C:{row['close']:.1f} | "
+                    f"Body:{body_size:.1f} UpperWick:{wick_upper:.1f} LowerWick:{wick_lower:.1f}"
+                )
+            
+            candles_text = "\n".join(candle_summary)
+            
+            # Calculate key technical levels from actual chart
+            current_price = recent_candles['close'].iloc[-1]
+            swing_high = recent_candles['high'].tail(20).max()
+            swing_low = recent_candles['low'].tail(20).min()
+            
+            # Calculate dynamic support/resistance from recent price action
+            recent_prices = recent_candles['close'].tail(20).values
+            resistance_zone = np.percentile(recent_prices, 75)
+            support_zone = np.percentile(recent_prices, 25)
             
             url = "https://api.deepseek.com/v1/chat/completions"
             headers = {
@@ -825,51 +856,71 @@ class DeepSeekAnalyzer:
             oi_changes = ""
             if oi_comparison.get('deltas'):
                 oi_changes = "\n".join([
-                    f"Strike {d['strike']}: CE OI {d['ce_oi_change']:+,}, PE OI {d['pe_oi_change']:+,}"
+                    f"Strike {d['strike']}: CE OI {d['ce_oi_change']:+,}, PE OI {d['pe_oi_change']:+,}, "
+                    f"CE Vol {d['ce_volume']:,}, PE Vol {d['pe_volume']:,}"
                     for d in oi_comparison['deltas'][:5]
                 ])
             
-            prompt = f"""You are expert equity trader. Analyze and give PE/CE buying opportunity.
+            prompt = f"""You are expert Indian equity trader analyzing NIFTY 50 stocks.
 
-CHART DATA:
-- Symbol: {chart_data['symbol']}
-- Spot Price: Rs {chart_data['spot_price']}
-- Trend: {chart_data['trend']}
-- Support: {chart_data['support_zones']}
-- Resistance: {chart_data['resistance_zones']}
-- Patterns: {chart_data['chart_patterns']}
+CURRENT PRICE: Rs {current_price:.2f}
 
-OPTION DATA:
-- PCR: {oi_data['pcr']}
-- Max CE Strike: {oi_data['max_ce_strike']}
-- Max PE Strike: {oi_data['max_pe_strike']}
+LAST 10 CANDLESTICKS (15-min timeframe):
+{candles_text}
+
+TECHNICAL LEVELS (from 3-day chart):
+- Swing High (20 candles): Rs {swing_high:.2f}
+- Swing Low (20 candles): Rs {swing_low:.2f}
+- Dynamic Resistance: Rs {resistance_zone:.2f}
+- Dynamic Support: Rs {support_zone:.2f}
+- Chart Trend: {chart_data['trend']}
+- Detected Patterns: {chart_data['chart_patterns']}
+
+OPTION CHAIN DATA:
+- PCR Ratio: {oi_data['pcr']}
 - Max Pain: Rs {oi_data['max_pain']}
+- Max CE OI Strike: {oi_data['max_ce_strike']} ({oi_data['max_ce_oi']:,} OI)
+- Max PE OI Strike: {oi_data['max_pe_strike']} ({oi_data['max_pe_oi']:,} OI)
 
-OI CHANGES:
-{oi_changes if oi_changes else "No significant changes"}
+OI CHANGES (Last scan comparison):
+{oi_changes if oi_changes else "First scan - no comparison data"}
 
-Reply ONLY JSON:
+ANALYSIS RULES:
+1. Entry should be ACTUAL CURRENT PRICE (Rs {current_price:.2f})
+2. Target should be realistic (2-3% from entry)
+3. Stop Loss should be below recent swing low for PE, above swing high for CE
+4. Consider last 10 candles' price action
+5. Combine OI data with chart patterns
+6. Check if OI buildup supports the trade direction
+
+Reply ONLY JSON (no markdown):
 {{
   "opportunity": "PE_BUY/CE_BUY/WAIT",
   "confidence": 80,
-  "recommended_strike": {chart_data['spot_price']},
-  "entry_price": 100,
-  "target": 150,
-  "stop_loss": 80,
-  "quantity_lots": 1,
-  "reasoning": "Combined analysis",
-  "marathi_explanation": "मराठी analysis"
+  "recommended_strike": {int(current_price)},
+  "entry_price": {current_price:.2f},
+  "target": {current_price * 1.03:.2f},
+  "stop_loss": {swing_low:.2f},
+  "reasoning": "Based on last 10 candles showing [pattern], OI data shows [analysis], current price at [level]",
+  "key_levels": "Support: {support_zone:.2f}, Resistance: {resistance_zone:.2f}",
+  "oi_signal": "PE buildup at [strike] / CE unwinding at [strike]",
+  "risk_reward": "1:2"
 }}
+
+IMPORTANT: 
+- Entry MUST be current spot price
+- Target/SL based on CHART levels (not arbitrary 100/150/80)
+- Explain WHY this trade based on candles + OI
 """
             
             payload = {
                 "model": "deepseek-chat",
                 "messages": [
-                    {"role": "system", "content": "Expert trader. Reply JSON only."},
+                    {"role": "system", "content": "You are expert equity trader. Analyze chart candles + option chain. Reply JSON only, no markdown."},
                     {"role": "user", "content": prompt}
                 ],
                 "temperature": 0.3,
-                "max_tokens": 800
+                "max_tokens": 1000
             }
             
             response = requests.post(url, json=payload, headers=headers, timeout=30)
@@ -885,7 +936,7 @@ Reply ONLY JSON:
             json_match = re.search(r'\{.*\}', content, re.DOTALL)
             if json_match:
                 analysis = json.loads(json_match.group())
-                logger.info(f"✅ DeepSeek: {analysis['opportunity']} ({analysis['confidence']}%)")
+                logger.info(f"✅ DeepSeek: {analysis['opportunity']} at {analysis['entry_price']} (Confidence: {analysis['confidence']}%)")
                 return analysis
             
             logger.warning("⚠️ Could not parse DeepSeek response")
@@ -1006,9 +1057,9 @@ class AdvancedFOBot:
                         oi_comparison = self.redis.get_oi_comparison(symbol, oi_list)
                         self.redis.store_option_chain(symbol, oi_list, spot_price)
             
-            # DEEPSEEK AI ANALYSIS
+            # DEEPSEEK AI ANALYSIS (with candle data)
             logger.info(f"🤖 Running DeepSeek Analysis...")
-            analysis = DeepSeekAnalyzer.analyze_combined(chart_data, oi_data, oi_comparison)
+            analysis = DeepSeekAnalyzer.analyze_combined(chart_data, oi_data, oi_comparison, candles_df)
             
             if not analysis:
                 logger.warning(f"⚠️ {symbol}: No AI analysis - SKIP")
@@ -1063,20 +1114,34 @@ class AdvancedFOBot:
             symbol_safe = self.escape_html(symbol)
             spot_safe = self.escape_html(f"{spot_price:.2f}")
             confidence_safe = self.escape_html(analysis['confidence'])
-            entry_safe = self.escape_html(analysis.get('entry_price', 100))
-            target_safe = self.escape_html(analysis.get('target', 150))
-            sl_safe = self.escape_html(analysis.get('stop_loss', 80))
+            entry_safe = self.escape_html(f"{analysis.get('entry_price', spot_price):.2f}")
+            target_safe = self.escape_html(f"{analysis.get('target', spot_price * 1.03):.2f}")
+            sl_safe = self.escape_html(f"{analysis.get('stop_loss', spot_price * 0.97):.2f}")
             
             ist_time = datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%H:%M')
             
-            # COMPACT caption (under 700 chars)
+            # Calculate R:R ratio
+            entry_val = analysis.get('entry_price', spot_price)
+            target_val = analysis.get('target', spot_price * 1.03)
+            sl_val = analysis.get('stop_loss', spot_price * 0.97)
+            risk = abs(entry_val - sl_val)
+            reward = abs(target_val - entry_val)
+            rr_ratio = f"{reward/risk:.1f}" if risk > 0 else "N/A"
+            
+            # COMPACT caption with REAL CHART LEVELS
             short_caption = f"""
 🚀 <b>{symbol_safe}</b> {signal_emoji}
 
-<b>{signal_text}</b> | {confidence_safe}% | Rs {spot_safe}
-Entry: {entry_safe} | Target: {target_safe} | SL: {sl_safe}
+<b>{signal_text}</b> | Confidence: {confidence_safe}%
 
-Trend: {chart_data['trend']} | PCR: {oi_data['pcr']}
+📊 <b>CHART LEVELS (from 3-day data):</b>
+Spot: Rs {spot_safe}
+Entry: Rs {entry_safe}
+Target: Rs {target_safe} 
+SL: Rs {sl_safe}
+Risk:Reward = 1:{rr_ratio}
+
+📈 Trend: {chart_data['trend']} | PCR: {oi_data['pcr']}
 ⏰ {ist_time} IST
 """
             
