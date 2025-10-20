@@ -39,6 +39,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import mplfinance as mpf
 from io import BytesIO
+from PIL import Image
 
 # Logging
 logging.basicConfig(
