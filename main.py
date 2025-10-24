@@ -1,13 +1,15 @@
 """
-🤖 ADVANCED NIFTY 50 STOCKS TRADING BOT v6.0 - DEEPSEEK V3 ENHANCED
-✅ Last 5 Days Complete Candlestick Analysis
-✅ ATM ± 11 Strikes Full Option Chain Analysis
-✅ DeepSeek V3 Deep Market Analysis
-✅ Proper Chart-Based Entry/Target/SL Calculation
-✅ Enhanced Error Handling
+🤖 ADVANCED NIFTY 50 STOCKS TRADING BOT v7.2 - AGGREGATE OI/VOLUME ANALYSIS
+✅ Multi-Timeframe Analysis (5m/15m/1h)
+✅ Horizontal Large Charts (16x9)
+✅ Advanced Candlestick Pattern Detection (15+ patterns)
+✅ OI Flow Matrix Analysis (Long/Short Buildup/Unwinding)
+✅ AGGREGATE OI + VOLUME ANALYSIS (All strikes combined)
+✅ Redis 24 Hours Expiry
+✅ Enhanced DeepSeek V3 Prompt with Total OI/Volume Changes
 
 Author: Advanced Trading System
-Version: 6.0 - DEEPSEEK ENHANCED
+Version: 7.2 - AGGREGATE ANALYSIS
 """
 
 import asyncio
@@ -26,6 +28,7 @@ import pytz
 import redis
 from dataclasses import dataclass
 import html
+import re
 
 # Telegram
 from telegram import Bot
@@ -68,15 +71,15 @@ class Config:
     
     # Bot Settings
     SCAN_INTERVAL = 900  # 15 minutes
-    CONFIDENCE_THRESHOLD = 75
+    CONFIDENCE_THRESHOLD = 70
     MARKET_OPEN = "09:15"
     MARKET_CLOSE = "15:30"
-    REDIS_EXPIRY = 3600
+    REDIS_EXPIRY = 86400  # 24 hours (1 day)
     
     # Enhanced Analysis Settings
-    LOOKBACK_DAYS = 5  # Last 5 days data
-    ATM_STRIKE_RANGE = 11  # ATM ± 11 strikes
-    CANDLE_ANALYSIS_COUNT = 50  # Last 50 candles for pattern detection
+    LOOKBACK_DAYS = 10
+    ATM_STRIKE_RANGE = 11
+    MIN_CANDLES_REQUIRED = 50
     
     # NIFTY 50 Stocks
     NIFTY_50_STOCKS = [
@@ -104,18 +107,20 @@ class OIData:
     pe_oi: int
     ce_volume: int
     pe_volume: int
-    ce_oi_change: int
-    pe_oi_change: int
+    ce_oi_change: int = 0
+    pe_oi_change: int = 0
     ce_iv: float = 0.0
     pe_iv: float = 0.0
     pcr_at_strike: float = 0.0
+    oi_flow_type: str = "UNKNOWN"
 
 
 @dataclass
 class CandlePattern:
     """Candlestick Pattern Data"""
     timestamp: str
-    candle_type: str  # BULLISH/BEARISH
+    pattern_name: str
+    candle_type: str
     body_size: float
     upper_wick: float
     lower_wick: float
@@ -124,14 +129,34 @@ class CandlePattern:
     low: float
     close: float
     volume: int
-    significance: str  # STRONG/MODERATE/WEAK
+    significance: str
+    volume_confirmed: bool = False
+
+
+@dataclass
+class AggregateOIAnalysis:
+    """Aggregate OI/Volume Analysis across all strikes"""
+    total_ce_oi: int
+    total_pe_oi: int
+    total_ce_volume: int
+    total_pe_volume: int
+    total_ce_oi_change: int
+    total_pe_oi_change: int
+    total_ce_volume_change: int
+    total_pe_volume_change: int
+    ce_oi_change_pct: float
+    pe_oi_change_pct: float
+    ce_volume_change_pct: float
+    pe_volume_change_pct: float
+    pcr: float
+    overall_sentiment: str  # BULLISH/BEARISH/NEUTRAL
 
 
 # ========================
 # REDIS HANDLER
 # ========================
 class RedisCache:
-    """Redis Cache Manager"""
+    """Redis Cache Manager with 24-hour expiry"""
     
     def __init__(self):
         try:
@@ -148,7 +173,7 @@ class RedisCache:
             self.redis_client = None
     
     def store_option_chain(self, symbol: str, oi_data: List[OIData], spot_price: float):
-        """Store option chain with enhanced OI data"""
+        """Store option chain with 24-hour expiry"""
         try:
             if not self.redis_client:
                 return False
@@ -164,70 +189,414 @@ class RedisCache:
                         'ce_volume': oi.ce_volume,
                         'pe_volume': oi.pe_volume,
                         'ce_iv': oi.ce_iv,
-                        'pe_iv': oi.pe_iv
+                        'pe_iv': oi.pe_iv,
+                        'oi_flow_type': oi.oi_flow_type
                     }
                     for oi in oi_data
                 ],
                 'timestamp': datetime.now(pytz.timezone('Asia/Kolkata')).isoformat()
             })
             
+            # 24-hour expiry
             self.redis_client.setex(key, Config.REDIS_EXPIRY, value)
             return True
         except Exception as e:
             logger.error(f"❌ Redis store error: {e}")
             return False
     
-    def get_oi_comparison(self, symbol: str, current_oi: List[OIData]) -> Dict:
-        """Enhanced OI comparison with detailed changes"""
+    def get_oi_comparison(self, symbol: str, current_oi: List[OIData], 
+                         current_price: float) -> Dict:
+        """Enhanced OI comparison with Aggregate + Flow Matrix"""
         try:
             if not self.redis_client:
-                return {'change': 'NO_CACHE', 'deltas': []}
+                return {
+                    'change': 'NO_CACHE', 
+                    'flow_summary': {},
+                    'aggregate_analysis': None
+                }
             
             key = f"oi_data:{symbol}"
             cached = self.redis_client.get(key)
             
             if not cached:
-                return {'change': 'FIRST_SCAN', 'deltas': []}
+                return {
+                    'change': 'FIRST_SCAN', 
+                    'flow_summary': {},
+                    'aggregate_analysis': None
+                }
             
             old_data = json.loads(cached)
             old_strikes = {s['strike']: s for s in old_data['strikes']}
+            previous_price = old_data.get('spot_price', current_price)
             
-            deltas = []
+            price_change = current_price - previous_price
+            price_direction = "UP" if price_change > 0 else "DOWN" if price_change < 0 else "FLAT"
+            
+            # AGGREGATE ANALYSIS
+            total_ce_oi_old = sum(s['ce_oi'] for s in old_data['strikes'])
+            total_pe_oi_old = sum(s['pe_oi'] for s in old_data['strikes'])
+            total_ce_volume_old = sum(s['ce_volume'] for s in old_data['strikes'])
+            total_pe_volume_old = sum(s['pe_volume'] for s in old_data['strikes'])
+            
+            total_ce_oi_new = sum(oi.ce_oi for oi in current_oi)
+            total_pe_oi_new = sum(oi.pe_oi for oi in current_oi)
+            total_ce_volume_new = sum(oi.ce_volume for oi in current_oi)
+            total_pe_volume_new = sum(oi.pe_volume for oi in current_oi)
+            
+            ce_oi_change = total_ce_oi_new - total_ce_oi_old
+            pe_oi_change = total_pe_oi_new - total_pe_oi_old
+            ce_volume_change = total_ce_volume_new - total_ce_volume_old
+            pe_volume_change = total_pe_volume_new - total_pe_volume_old
+            
+            ce_oi_change_pct = (ce_oi_change / total_ce_oi_old * 100) if total_ce_oi_old > 0 else 0
+            pe_oi_change_pct = (pe_oi_change / total_pe_oi_old * 100) if total_pe_oi_old > 0 else 0
+            ce_volume_change_pct = (ce_volume_change / total_ce_volume_old * 100) if total_ce_volume_old > 0 else 0
+            pe_volume_change_pct = (pe_volume_change / total_pe_volume_old * 100) if total_pe_volume_old > 0 else 0
+            
+            pcr = total_pe_oi_new / total_ce_oi_new if total_ce_oi_new > 0 else 0
+            
+            # OVERALL SENTIMENT
+            sentiment = "NEUTRAL"
+            if pe_oi_change_pct > 5 and pe_oi_change_pct > ce_oi_change_pct:
+                sentiment = "BULLISH"  # PE buildup = downside protection
+            elif ce_oi_change_pct > 5 and ce_oi_change_pct > pe_oi_change_pct:
+                sentiment = "BEARISH"  # CE buildup = upside capping
+            elif pcr > 1.3:
+                sentiment = "BULLISH"  # High PCR = more puts
+            elif pcr < 0.7:
+                sentiment = "BEARISH"  # Low PCR = more calls
+            
+            aggregate_analysis = AggregateOIAnalysis(
+                total_ce_oi=total_ce_oi_new,
+                total_pe_oi=total_pe_oi_new,
+                total_ce_volume=total_ce_volume_new,
+                total_pe_volume=total_pe_volume_new,
+                total_ce_oi_change=ce_oi_change,
+                total_pe_oi_change=pe_oi_change,
+                total_ce_volume_change=ce_volume_change,
+                total_pe_volume_change=pe_volume_change,
+                ce_oi_change_pct=ce_oi_change_pct,
+                pe_oi_change_pct=pe_oi_change_pct,
+                ce_volume_change_pct=ce_volume_change_pct,
+                pe_volume_change_pct=pe_volume_change_pct,
+                pcr=pcr,
+                overall_sentiment=sentiment
+            )
+            
+            # STRIKE-WISE FLOW MATRIX
+            flow_summary = {
+                'LONG_BUILDUP': [],
+                'SHORT_BUILDUP': [],
+                'LONG_UNWINDING': [],
+                'SHORT_COVERING': []
+            }
+            
             for curr_oi in current_oi:
                 old = old_strikes.get(curr_oi.strike, {})
                 
                 ce_oi_change = curr_oi.ce_oi - old.get('ce_oi', 0)
                 pe_oi_change = curr_oi.pe_oi - old.get('pe_oi', 0)
                 
-                # Track significant changes (>500 OI change)
-                if abs(ce_oi_change) > 500 or abs(pe_oi_change) > 500:
-                    deltas.append({
-                        'strike': curr_oi.strike,
-                        'ce_oi': curr_oi.ce_oi,
-                        'pe_oi': curr_oi.pe_oi,
-                        'ce_oi_change': ce_oi_change,
-                        'pe_oi_change': pe_oi_change,
-                        'ce_volume': curr_oi.ce_volume,
-                        'pe_volume': curr_oi.pe_volume,
-                        'pcr_at_strike': curr_oi.pcr_at_strike
-                    })
+                total_oi_change = ce_oi_change + pe_oi_change
+                
+                # Lowered threshold to 100 for better detection
+                if abs(total_oi_change) > 100:
+                    
+                    if price_direction == "UP" and total_oi_change > 0:
+                        if pe_oi_change > ce_oi_change:
+                            curr_oi.oi_flow_type = "LONG_BUILDUP"
+                            flow_summary['LONG_BUILDUP'].append({
+                                'strike': curr_oi.strike,
+                                'ce_oi_change': ce_oi_change,
+                                'pe_oi_change': pe_oi_change,
+                                'total_change': total_oi_change
+                            })
+                    
+                    elif price_direction == "DOWN" and total_oi_change > 0:
+                        if ce_oi_change > pe_oi_change:
+                            curr_oi.oi_flow_type = "SHORT_BUILDUP"
+                            flow_summary['SHORT_BUILDUP'].append({
+                                'strike': curr_oi.strike,
+                                'ce_oi_change': ce_oi_change,
+                                'pe_oi_change': pe_oi_change,
+                                'total_change': total_oi_change
+                            })
+                    
+                    elif price_direction == "DOWN" and total_oi_change < 0:
+                        if pe_oi_change < ce_oi_change:
+                            curr_oi.oi_flow_type = "LONG_UNWINDING"
+                            flow_summary['LONG_UNWINDING'].append({
+                                'strike': curr_oi.strike,
+                                'ce_oi_change': ce_oi_change,
+                                'pe_oi_change': pe_oi_change,
+                                'total_change': total_oi_change
+                            })
+                    
+                    elif price_direction == "UP" and total_oi_change < 0:
+                        if ce_oi_change < pe_oi_change:
+                            curr_oi.oi_flow_type = "SHORT_COVERING"
+                            flow_summary['SHORT_COVERING'].append({
+                                'strike': curr_oi.strike,
+                                'ce_oi_change': ce_oi_change,
+                                'pe_oi_change': pe_oi_change,
+                                'total_change': total_oi_change
+                            })
             
-            # Sort by absolute OI change (most significant first)
-            deltas.sort(key=lambda x: abs(x['ce_oi_change']) + abs(x['pe_oi_change']), reverse=True)
+            for flow_type in flow_summary:
+                flow_summary[flow_type].sort(key=lambda x: abs(x['total_change']), reverse=True)
             
             time_diff = (datetime.now(pytz.timezone('Asia/Kolkata')) - 
                         datetime.fromisoformat(old_data['timestamp'])).seconds / 60
             
             return {
                 'change': 'UPDATED',
-                'deltas': deltas[:15],  # Top 15 significant changes
+                'price_movement': price_direction,
+                'price_change': price_change,
+                'flow_summary': flow_summary,
+                'aggregate_analysis': aggregate_analysis,
                 'time_diff': time_diff,
-                'old_spot': old_data.get('spot_price', 0)
+                'old_spot': previous_price
             }
             
         except Exception as e:
             logger.error(f"❌ Redis comparison error: {e}")
-            return {'change': 'ERROR', 'deltas': []}
+            return {
+                'change': 'ERROR', 
+                'flow_summary': {},
+                'aggregate_analysis': None
+            }
+
+
+# ========================
+# ADVANCED PATTERN DETECTOR
+# ========================
+class AdvancedPatternDetector:
+    """Advanced Candlestick Pattern Detection"""
+    
+    @staticmethod
+    def detect_patterns(df: pd.DataFrame, lookback: int = 50) -> List[CandlePattern]:
+        """Detect 15+ candlestick patterns"""
+        patterns = []
+        
+        actual_lookback = min(lookback, len(df))
+        recent_df = df.tail(actual_lookback)
+        avg_volume = recent_df['volume'].mean()
+        
+        for i in range(len(recent_df)):
+            row = recent_df.iloc[i]
+            idx = recent_df.index[i]
+            
+            body = abs(row['close'] - row['open'])
+            candle_range = row['high'] - row['low']
+            upper_wick = row['high'] - max(row['open'], row['close'])
+            lower_wick = min(row['open'], row['close']) - row['low']
+            
+            is_bullish = row['close'] > row['open']
+            candle_type = "BULLISH" if is_bullish else "BEARISH"
+            
+            volume_confirmed = row['volume'] > avg_volume * 1.2
+            
+            pattern_name = "NORMAL"
+            significance = "WEAK"
+            
+            if candle_range > 0:
+                body_ratio = body / candle_range
+                
+                if body_ratio < 0.1:
+                    pattern_name = "DOJI"
+                    significance = "STRONG" if volume_confirmed else "MODERATE"
+                
+                elif lower_wick > body * 2 and upper_wick < body * 0.5 and body_ratio < 0.3:
+                    pattern_name = "HAMMER"
+                    significance = "STRONG" if volume_confirmed else "MODERATE"
+                
+                elif upper_wick > body * 2 and lower_wick < body * 0.5 and body_ratio < 0.3:
+                    pattern_name = "INVERTED_HAMMER"
+                    significance = "STRONG" if volume_confirmed else "MODERATE"
+                
+                elif upper_wick > body * 2 and lower_wick < body * 0.5 and not is_bullish:
+                    pattern_name = "SHOOTING_STAR"
+                    significance = "STRONG" if volume_confirmed else "MODERATE"
+                
+                elif upper_wick < body * 0.1 and lower_wick < body * 0.1 and body_ratio > 0.8:
+                    pattern_name = "MARUBOZU_BULLISH" if is_bullish else "MARUBOZU_BEARISH"
+                    significance = "STRONG" if volume_confirmed else "MODERATE"
+                
+                elif body_ratio < 0.3 and upper_wick > body and lower_wick > body:
+                    pattern_name = "SPINNING_TOP"
+                    significance = "MODERATE"
+                
+                elif i > 0:
+                    prev_row = recent_df.iloc[i-1]
+                    prev_body = abs(prev_row['close'] - prev_row['open'])
+                    prev_is_bullish = prev_row['close'] > prev_row['open']
+                    
+                    if (is_bullish and not prev_is_bullish and 
+                        row['open'] < prev_row['close'] and 
+                        row['close'] > prev_row['open'] and
+                        body > prev_body * 0.7):
+                        pattern_name = "BULLISH_ENGULFING"
+                        significance = "STRONG" if volume_confirmed else "MODERATE"
+                    
+                    elif (not is_bullish and prev_is_bullish and 
+                          row['open'] > prev_row['close'] and 
+                          row['close'] < prev_row['open'] and
+                          body > prev_body * 0.7):
+                        pattern_name = "BEARISH_ENGULFING"
+                        significance = "STRONG" if volume_confirmed else "MODERATE"
+                    
+                    elif (is_bullish and not prev_is_bullish and
+                          row['open'] < prev_row['low'] and
+                          row['close'] > (prev_row['open'] + prev_row['close']) / 2):
+                        pattern_name = "PIERCING_LINE"
+                        significance = "STRONG" if volume_confirmed else "MODERATE"
+                    
+                    elif (not is_bullish and prev_is_bullish and
+                          row['open'] > prev_row['high'] and
+                          row['close'] < (prev_row['open'] + prev_row['close']) / 2):
+                        pattern_name = "DARK_CLOUD_COVER"
+                        significance = "STRONG" if volume_confirmed else "MODERATE"
+                    
+                    elif (body < prev_body * 0.5 and
+                          row['high'] < prev_row['high'] and
+                          row['low'] > prev_row['low']):
+                        pattern_name = "HARAMI_BULLISH" if is_bullish else "HARAMI_BEARISH"
+                        significance = "MODERATE"
+                
+                if i > 1:
+                    prev1 = recent_df.iloc[i-1]
+                    prev2 = recent_df.iloc[i-2]
+                    
+                    if (is_bullish and 
+                        prev1['close'] > prev1['open'] and 
+                        prev2['close'] > prev2['open'] and
+                        row['close'] > prev1['close'] > prev2['close']):
+                        pattern_name = "THREE_WHITE_SOLDIERS"
+                        significance = "STRONG"
+                    
+                    elif (not is_bullish and 
+                          prev1['close'] < prev1['open'] and 
+                          prev2['close'] < prev2['open'] and
+                          row['close'] < prev1['close'] < prev2['close']):
+                        pattern_name = "THREE_BLACK_CROWS"
+                        significance = "STRONG"
+                
+                if pattern_name == "NORMAL":
+                    if body_ratio > 0.7:
+                        significance = "STRONG"
+                    elif body_ratio > 0.4:
+                        significance = "MODERATE"
+            
+            patterns.append(CandlePattern(
+                timestamp=idx.strftime('%Y-%m-%d %H:%M'),
+                pattern_name=pattern_name,
+                candle_type=candle_type,
+                body_size=body,
+                upper_wick=upper_wick,
+                lower_wick=lower_wick,
+                open=row['open'],
+                high=row['high'],
+                low=row['low'],
+                close=row['close'],
+                volume=int(row['volume']),
+                significance=significance,
+                volume_confirmed=volume_confirmed
+            ))
+        
+        return patterns
+
+
+# ========================
+# CHART ANALYZER
+# ========================
+class ChartAnalyzer:
+    """Multi-Timeframe Chart Analysis"""
+    
+    @staticmethod
+    def identify_trend(df: pd.DataFrame) -> str:
+        """Identify trend using SMAs"""
+        if len(df) < 20:
+            return "INSUFFICIENT_DATA"
+        
+        sma_len = min(50, len(df))
+        sma_20_len = min(20, len(df))
+        
+        recent = df.tail(sma_len)
+        
+        sma_20 = recent['close'].tail(sma_20_len).mean()
+        sma_50 = recent['close'].mean()
+        current_price = recent['close'].iloc[-1]
+        
+        if current_price > sma_20 > sma_50:
+            return "UPTREND"
+        elif current_price < sma_20 < sma_50:
+            return "DOWNTREND"
+        else:
+            return "SIDEWAYS"
+    
+    @staticmethod
+    def calculate_support_resistance(df: pd.DataFrame) -> Dict:
+        """Calculate dynamic support/resistance"""
+        if len(df) < 20:
+            current = df['close'].iloc[-1]
+            return {
+                'nearest_support': current * 0.98,
+                'nearest_resistance': current * 1.02,
+                'swing_high': df['high'].max(),
+                'swing_low': df['low'].min()
+            }
+        
+        lookback = min(100, len(df))
+        recent = df.tail(lookback)
+        current = recent['close'].iloc[-1]
+        
+        pivot_window = min(50, len(recent))
+        highs = recent['high'].tail(pivot_window)
+        lows = recent['low'].tail(pivot_window)
+        
+        resistance_levels = []
+        support_levels = []
+        
+        window_size = min(5, len(highs) // 3)
+        
+        if window_size >= 2:
+            for i in range(window_size, len(highs) - window_size):
+                if all(highs.iloc[i] >= highs.iloc[i-j] for j in range(1, window_size+1)) and \
+                   all(highs.iloc[i] >= highs.iloc[i+j] for j in range(1, window_size+1)):
+                    resistance_levels.append(highs.iloc[i])
+            
+            for i in range(window_size, len(lows) - window_size):
+                if all(lows.iloc[i] <= lows.iloc[i-j] for j in range(1, window_size+1)) and \
+                   all(lows.iloc[i] <= lows.iloc[i+j] for j in range(1, window_size+1)):
+                    support_levels.append(lows.iloc[i])
+        
+        def cluster(levels):
+            if not levels:
+                return []
+            levels = sorted(levels)
+            clustered = []
+            current_cluster = [levels[0]]
+            for level in levels[1:]:
+                if abs(level - current_cluster[-1]) / current_cluster[-1] < 0.005:
+                    current_cluster.append(level)
+                else:
+                    clustered.append(np.mean(current_cluster))
+                    current_cluster = [level]
+            clustered.append(np.mean(current_cluster))
+            return clustered
+        
+        resistance = cluster(resistance_levels)
+        support = cluster(support_levels)
+        
+        resistance = [r for r in resistance if 0.01 <= (r - current)/current <= 0.08]
+        support = [s for s in support if 0.01 <= (current - s)/current <= 0.08]
+        
+        return {
+            'nearest_support': min(support) if support else current * 0.98,
+            'nearest_resistance': min(resistance) if resistance else current * 1.02,
+            'swing_high': highs.max(),
+            'swing_low': lows.min()
+        }
 
 
 # ========================
@@ -247,50 +616,42 @@ class DhanAPI:
         logger.info("✅ DhanAPI initialized")
     
     async def load_security_ids(self):
-        """Load security IDs for NIFTY 50 stocks"""
+        """Load security IDs"""
         try:
             logger.info("📥 Loading NIFTY 50 stock security IDs...")
             response = requests.get(Config.DHAN_INSTRUMENTS_URL, timeout=30)
             
             if response.status_code != 200:
-                logger.error(f"❌ Failed to load instruments")
                 return False
             
             csv_reader = csv.DictReader(io.StringIO(response.text))
             all_rows = list(csv_reader)
             
-            logger.info(f"📊 Total instruments in CSV: {len(all_rows)}")
-            
             for stock_symbol in Config.NIFTY_50_STOCKS:
-                found = False
                 for row in all_rows:
                     try:
                         trading_symbol = row.get('SEM_TRADING_SYMBOL', '').strip()
                         segment = row.get('SEM_SEGMENT', '').strip()
                         exch_segment = row.get('SEM_EXM_EXCH_ID', '').strip()
                         
-                        if (segment == 'E' and 
-                            exch_segment == 'NSE' and 
-                            trading_symbol == stock_symbol):
-                            
+                        if (segment == 'E' and exch_segment == 'NSE' and trading_symbol == stock_symbol):
                             sec_id = row.get('SEM_SMST_SECURITY_ID', '').strip()
                             if sec_id:
+                                instrument_type = "INDEX" if stock_symbol in ["NIFTY", "BANKNIFTY"] else "STOCK"
+                                
                                 self.security_id_map[stock_symbol] = {
                                     'security_id': int(sec_id),
                                     'segment': 'NSE_EQ',
                                     'trading_symbol': trading_symbol,
-                                    'instrument': 'EQUITY'
+                                    'instrument': 'EQUITY',
+                                    'instrument_type': instrument_type
                                 }
-                                logger.info(f"✅ {stock_symbol}: Security ID = {sec_id}")
-                                found = True
+                                logger.info(f"✅ {stock_symbol}: ID={sec_id} Type={instrument_type}")
                                 break
                     except Exception:
                         continue
-                
-                if not found:
-                    logger.warning(f"⚠️ {stock_symbol}: Not found in instruments CSV")
             
-            logger.info(f"🎯 Successfully loaded {len(self.security_id_map)}/50 NIFTY stocks")
+            logger.info(f"🎯 Loaded {len(self.security_id_map)}/50 stocks")
             return len(self.security_id_map) > 0
             
         except Exception as e:
@@ -298,7 +659,7 @@ class DhanAPI:
             return False
     
     def get_nearest_expiry(self, security_id: int, segment: str) -> Optional[str]:
-        """Get nearest expiry for stock options"""
+        """Get nearest expiry"""
         try:
             payload = {
                 "UnderlyingScrip": int(security_id),
@@ -314,24 +675,23 @@ class DhanAPI:
             
             if response.status_code == 200:
                 data = response.json()
-                if data.get('status') == 'success' and data.get('data') and len(data['data']) > 0:
+                if data.get('status') == 'success' and data.get('data'):
                     return data['data'][0]
-            
             return None
             
         except Exception as e:
             logger.error(f"❌ Expiry error: {e}")
             return None
     
-    def get_historical_candles(self, security_id: int, segment: str, symbol: str, 
-                              lookback_days: int = 5) -> Optional[pd.DataFrame]:
-        """Get last 5 days historical candles"""
+    def get_multi_timeframe_data(self, security_id: int, segment: str, 
+                                 symbol: str, instrument_type: str) -> Optional[Dict[str, pd.DataFrame]]:
+        """Get multi-timeframe data"""
         try:
-            logger.info(f"📊 Fetching {lookback_days} days candles for {symbol}")
+            logger.info(f"📊 Fetching MTF data for {symbol} ({instrument_type})")
             
             ist = pytz.timezone('Asia/Kolkata')
             to_date = datetime.now(ist)
-            from_date = to_date - timedelta(days=lookback_days)
+            from_date = to_date - timedelta(days=Config.LOOKBACK_DAYS)
             
             payload = {
                 "securityId": str(security_id),
@@ -349,37 +709,95 @@ class DhanAPI:
                 timeout=15
             )
             
-            if response.status_code == 200:
-                data = response.json()
-                
-                if 'timestamp' in data and 'open' in data and len(data['open']) > 0:
-                    df = pd.DataFrame({
-                        'timestamp': pd.to_datetime(data['timestamp'], unit='s'),
-                        'open': data['open'],
-                        'high': data['high'],
-                        'low': data['low'],
-                        'close': data['close'],
-                        'volume': data['volume']
-                    })
-                    
-                    df = df.dropna()
-                    df.set_index('timestamp', inplace=True)
-                    logger.info(f"✅ {symbol}: {len(df)} candles fetched")
-                    return df
-                else:
-                    logger.warning(f"⚠️ {symbol}: No candle data")
-                    return None
-            else:
-                logger.error(f"❌ {symbol}: API error {response.status_code}")
+            if response.status_code != 200:
+                logger.error(f"API returned {response.status_code}")
                 return None
             
+            data = response.json()
+            
+            if 'timestamp' not in data or len(data['open']) == 0:
+                logger.warning(f"No candle data in response")
+                return None
+            
+            df_base = pd.DataFrame({
+                'timestamp': pd.to_datetime(data['timestamp'], unit='s'),
+                'open': data['open'],
+                'high': data['high'],
+                'low': data['low'],
+                'close': data['close'],
+                'volume': data['volume']
+            })
+            
+            df_base = df_base.dropna()
+            df_base.set_index('timestamp', inplace=True)
+            
+            logger.info(f"📥 Received {len(df_base)} base candles")
+            
+            if len(df_base) < Config.MIN_CANDLES_REQUIRED:
+                logger.warning(f"⚠️ Only {len(df_base)} candles, need {Config.MIN_CANDLES_REQUIRED}+")
+            
+            result = {}
+            
+            if instrument_type == "INDEX":
+                result['5m'] = df_base.copy()
+                
+                result['15m'] = df_base.resample('15min').agg({
+                    'open': 'first',
+                    'high': 'max',
+                    'low': 'min',
+                    'close': 'last',
+                    'volume': 'sum'
+                }).dropna()
+                
+                result['1h'] = df_base.resample('1h').agg({
+                    'open': 'first',
+                    'high': 'max',
+                    'low': 'min',
+                    'close': 'last',
+                    'volume': 'sum'
+                }).dropna()
+                
+            else:
+                if len(df_base) > 1:
+                    time_diff = (df_base.index[1] - df_base.index[0]).seconds / 60
+                else:
+                    time_diff = 15
+                
+                if time_diff <= 5:
+                    df_15m = df_base.resample('15min').agg({
+                        'open': 'first',
+                        'high': 'max',
+                        'low': 'min',
+                        'close': 'last',
+                        'volume': 'sum'
+                    }).dropna()
+                else:
+                    df_15m = df_base.copy()
+                
+                result['15m'] = df_15m
+                
+                result['1h'] = df_15m.resample('1h').agg({
+                    'open': 'first',
+                    'high': 'max',
+                    'low': 'min',
+                    'close': 'last',
+                    'volume': 'sum'
+                }).dropna()
+            
+            logger.info(f"✅ {symbol}: MTF data ready")
+            for tf, df in result.items():
+                logger.info(f"   {tf}: {len(df)} candles")
+            
+            return result
+            
         except Exception as e:
-            logger.error(f"❌ Candle fetch error for {symbol}: {e}")
+            logger.error(f"❌ MTF data error: {e}")
+            logger.error(traceback.format_exc())
             return None
     
     def get_option_chain(self, security_id: int, segment: str, expiry: str, 
                         symbol: str, spot_price: float) -> Optional[List[OIData]]:
-        """Get ATM ± 11 strikes option chain data"""
+        """Get option chain data"""
         try:
             payload = {
                 "UnderlyingScrip": security_id,
@@ -403,13 +821,11 @@ class DhanAPI:
             
             oc_data = data['data'].get('oc', {})
             
-            # Find ATM strike (nearest to spot price)
             strikes = [float(s) for s in oc_data.keys()]
             atm_strike = min(strikes, key=lambda x: abs(x - spot_price))
             
-            logger.info(f"📍 {symbol} ATM Strike: {atm_strike} (Spot: {spot_price:.2f})")
+            logger.info(f"📍 {symbol} ATM: {atm_strike} (Spot: {spot_price:.2f})")
             
-            # Get ATM ± 11 strikes
             strike_range = Config.ATM_STRIKE_RANGE
             oi_list = []
             
@@ -417,7 +833,6 @@ class DhanAPI:
                 try:
                     strike = float(strike_str)
                     
-                    # Filter: Only ATM ± 11 strikes
                     strikes_sorted = sorted(strikes)
                     atm_index = strikes_sorted.index(atm_strike)
                     start_idx = max(0, atm_index - strike_range)
@@ -450,7 +865,7 @@ class DhanAPI:
                 except Exception:
                     continue
             
-            logger.info(f"✅ {symbol}: Fetched {len(oi_list)} strikes (ATM ± {strike_range})")
+            logger.info(f"✅ {symbol}: {len(oi_list)} strikes fetched")
             return oi_list
             
         except Exception as e:
@@ -459,389 +874,236 @@ class DhanAPI:
 
 
 # ========================
-# ENHANCED CHART ANALYZER
+# DEEPSEEK ANALYZER
 # ========================
-class EnhancedChartAnalyzer:
-    """Deep Chart Pattern & Candlestick Analysis"""
+class DeepSeekAnalyzer:
+    """DeepSeek V3 with Aggregate OI/Volume Analysis"""
     
     @staticmethod
-    def analyze_last_5_days_candles(df: pd.DataFrame) -> List[CandlePattern]:
-        """Analyze all candles from last 5 days"""
-        patterns = []
-        
-        for idx, row in df.iterrows():
-            body = abs(row['close'] - row['open'])
-            upper_wick = row['high'] - max(row['open'], row['close'])
-            lower_wick = min(row['open'], row['close']) - row['low']
-            candle_range = row['high'] - row['low']
-            
-            # Determine candle type
-            is_bullish = row['close'] > row['open']
-            candle_type = "BULLISH" if is_bullish else "BEARISH"
-            
-            # Determine significance
-            if candle_range > 0:
-                body_ratio = body / candle_range
-                if body_ratio > 0.7:
-                    significance = "STRONG"
-                elif body_ratio > 0.4:
-                    significance = "MODERATE"
-                else:
-                    significance = "WEAK"
-            else:
-                significance = "DOJI"
-            
-            patterns.append(CandlePattern(
-                timestamp=idx.strftime('%Y-%m-%d %H:%M'),
-                candle_type=candle_type,
-                body_size=body,
-                upper_wick=upper_wick,
-                lower_wick=lower_wick,
-                open=row['open'],
-                high=row['high'],
-                low=row['low'],
-                close=row['close'],
-                volume=int(row['volume']),
-                significance=significance
-            ))
-        
-        return patterns
-    
-    @staticmethod
-    def identify_trend(df: pd.DataFrame) -> str:
-        """Identify overall trend using multiple timeframes"""
-        if len(df) < 50:
-            return "INSUFFICIENT_DATA"
-        
-        recent = df.tail(100)
-        
-        # Multiple SMAs
-        sma_20 = recent['close'].tail(20).mean()
-        sma_50 = recent['close'].tail(50).mean()
-        sma_100 = recent['close'].mean()
-        current_price = recent['close'].iloc[-1]
-        
-        # Trend strength
-        if current_price > sma_20 > sma_50 > sma_100:
-            return "STRONG_UPTREND"
-        elif current_price > sma_20 > sma_50:
-            return "UPTREND"
-        elif current_price < sma_20 < sma_50 < sma_100:
-            return "STRONG_DOWNTREND"
-        elif current_price < sma_20 < sma_50:
-            return "DOWNTREND"
-        else:
-            return "SIDEWAYS"
-    
-    @staticmethod
-    def calculate_dynamic_levels(df: pd.DataFrame) -> Dict:
-        """Calculate dynamic support/resistance from price action"""
-        if len(df) < 50:
-            return {}
-        
-        recent = df.tail(100)
-        current = recent['close'].iloc[-1]
-        
-        # Recent swing points
-        highs = recent['high'].tail(50)
-        lows = recent['low'].tail(50)
-        
-        # Find pivot highs
-        resistance_levels = []
-        for i in range(5, len(highs) - 5):
-            if all(highs.iloc[i] >= highs.iloc[i-j] for j in range(1, 6)) and \
-               all(highs.iloc[i] >= highs.iloc[i+j] for j in range(1, 6)):
-                resistance_levels.append(highs.iloc[i])
-        
-        # Find pivot lows
-        support_levels = []
-        for i in range(5, len(lows) - 5):
-            if all(lows.iloc[i] <= lows.iloc[i-j] for j in range(1, 6)) and \
-               all(lows.iloc[i] <= lows.iloc[i+j] for j in range(1, 6)):
-                support_levels.append(lows.iloc[i])
-        
-        # Cluster nearby levels
-        def cluster(levels):
-            if not levels:
-                return []
-            levels = sorted(levels)
-            clustered = []
-            current_cluster = [levels[0]]
-            for level in levels[1:]:
-                if abs(level - current_cluster[-1]) / current_cluster[-1] < 0.005:
-                    current_cluster.append(level)
-                else:
-                    clustered.append(np.mean(current_cluster))
-                    current_cluster = [level]
-            clustered.append(np.mean(current_cluster))
-            return clustered
-        
-        resistance = cluster(resistance_levels)
-        support = cluster(support_levels)
-        
-        # Filter by relevance (1-8% from current price)
-        resistance = [r for r in resistance if 0.01 <= (r - current)/current <= 0.08]
-        support = [s for s in support if 0.01 <= (current - s)/current <= 0.08]
-        
-        return {
-            'nearest_support': min(support) if support else current * 0.98,
-            'nearest_resistance': min(resistance) if resistance else current * 1.02,
-            'all_support': sorted(support)[:3],
-            'all_resistance': sorted(resistance)[:3],
-            'swing_high': highs.max(),
-            'swing_low': lows.min()
-        }
-
-
-# ========================
-# DEEPSEEK V3 ENHANCED ANALYZER
-# ========================
-class DeepSeekV3Analyzer:
-    """DeepSeek V3 with Deep Market Analysis"""
-    
-    @staticmethod
-    def create_comprehensive_analysis(symbol: str, spot_price: float, 
-                                     candle_patterns: List[CandlePattern],
-                                     oi_data: List[OIData], oi_comparison: Dict,
-                                     chart_levels: Dict, trend: str) -> Optional[Dict]:
-        """Deep analysis with last 5 days candles + ATM ± 11 strikes OI"""
+    def extract_json_from_response(content: str) -> Optional[Dict]:
+        """Enhanced JSON extraction"""
         try:
-            logger.info(f"🤖 DeepSeek V3: Deep analysis for {symbol}...")
+            try:
+                return json.loads(content)
+            except:
+                pass
             
-            # Format last 50 candles for AI (detailed)
-            last_50 = candle_patterns[-50:] if len(candle_patterns) > 50 else candle_patterns
+            json_patterns = [
+                r'```json\s*(\{.*?\})\s*```',
+                r'```\s*(\{.*?\})\s*```',
+                r'(\{[^{]*?"opportunity"[^}]*\})',
+            ]
             
-            candles_detail = []
-            for i, cp in enumerate(last_50[-20:], 1):  # Last 20 candles detail
-                candles_detail.append(
-                    f"{i}. {cp.timestamp} | {cp.candle_type} ({cp.significance}) | "
-                    f"O:{cp.open:.1f} H:{cp.high:.1f} L:{cp.low:.1f} C:{cp.close:.1f} | "
-                    f"Body:{cp.body_size:.1f} UpperWick:{cp.upper_wick:.1f} LowerWick:{cp.lower_wick:.1f} | "
-                    f"Vol:{cp.volume:,}"
+            for pattern in json_patterns:
+                match = re.search(pattern, content, re.DOTALL)
+                if match:
+                    try:
+                        return json.loads(match.group(1))
+                    except:
+                        continue
+            
+            brace_count = 0
+            start_idx = content.find('{')
+            if start_idx != -1:
+                for i in range(start_idx, len(content)):
+                    if content[i] == '{':
+                        brace_count += 1
+                    elif content[i] == '}':
+                        brace_count -= 1
+                        if brace_count == 0:
+                            try:
+                                return json.loads(content[start_idx:i+1])
+                            except:
+                                break
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"JSON extraction error: {e}")
+            return None
+    
+    @staticmethod
+    def create_analysis(symbol: str, spot_price: float, mtf_data: Dict,
+                       patterns_dict: Dict, oi_data: List[OIData], 
+                       oi_comparison: Dict, levels_dict: Dict) -> Optional[Dict]:
+        """Enhanced analysis with AGGREGATE OI/VOLUME data"""
+        try:
+            logger.info(f"🤖 DeepSeek: Analyzing {symbol}...")
+            
+            base_tf = '5m' if '5m' in mtf_data else '15m'
+            entry_tf_patterns = patterns_dict.get(base_tf, [])
+            
+            # Format patterns
+            pattern_summary = []
+            for i, p in enumerate(entry_tf_patterns[-10:], 1):
+                vol_flag = "✓" if p.volume_confirmed else ""
+                pattern_summary.append(
+                    f"{i}. {p.timestamp} | {p.pattern_name} ({p.significance}) {vol_flag}"
                 )
             
-            candles_text = "\n".join(candles_detail)
+            patterns_text = "\n".join(pattern_summary) if pattern_summary else "No significant patterns"
             
-            # Count candle types
-            bullish_count = sum(1 for c in last_50 if c.candle_type == "BULLISH")
-            bearish_count = sum(1 for c in last_50 if c.candle_type == "BEARISH")
-            strong_candles = sum(1 for c in last_50[-10:] if c.significance == "STRONG")
+            # Strong patterns count
+            strong_patterns = [p for p in entry_tf_patterns[-20:] if p.significance == "STRONG"]
+            pattern_types = {}
+            for p in strong_patterns:
+                pattern_types[p.pattern_name] = pattern_types.get(p.pattern_name, 0) + 1
             
-            # Format OI data (ATM ± 11 strikes)
+            # AGGREGATE OI/VOLUME ANALYSIS
+            aggregate = oi_comparison.get('aggregate_analysis')
+            
+            if aggregate:
+                agg_text = f"""
+AGGREGATE OI ANALYSIS (All {len(oi_data)} Strikes Combined):
+═══════════════════════════════════════════════════════════════════
+Total CE OI: {aggregate.total_ce_oi:,} (Change: {aggregate.total_ce_oi_change:+,} | {aggregate.ce_oi_change_pct:+.2f}%)
+Total PE OI: {aggregate.total_pe_oi:,} (Change: {aggregate.total_pe_oi_change:+,} | {aggregate.pe_oi_change_pct:+.2f}%)
+
+Total CE Volume: {aggregate.total_ce_volume:,} (Change: {aggregate.total_ce_volume_change:+,} | {aggregate.ce_volume_change_pct:+.2f}%)
+Total PE Volume: {aggregate.total_pe_volume:,} (Change: {aggregate.total_pe_volume_change:+,} | {aggregate.pe_volume_change_pct:+.2f}%)
+
+PCR: {aggregate.pcr:.2f}
+Overall Sentiment: {aggregate.overall_sentiment}
+
+INTERPRETATION:
+- CE OI increasing = Bearish (writers selling calls = resistance)
+- PE OI increasing = Bullish (writers selling puts = support)
+- High volume with OI increase = Strong conviction
+- PCR > 1.3 = Bullish | PCR < 0.7 = Bearish
+"""
+            else:
+                agg_text = "First scan - No aggregate comparison available yet"
+            
+            # Strike-wise OI (top 8)
             oi_data_sorted = sorted(oi_data, key=lambda x: x.strike)
             atm_strike = min(oi_data, key=lambda x: abs(x.strike - spot_price)).strike
             
             oi_table = []
-            for oi in oi_data_sorted:
-                marker = " ⭐ ATM" if oi.strike == atm_strike else ""
+            for oi in oi_data_sorted[:8]:
+                marker = " ⭐ATM" if oi.strike == atm_strike else ""
                 oi_table.append(
-                    f"Strike {oi.strike}{marker} | "
-                    f"CE OI:{oi.ce_oi:,} Vol:{oi.ce_volume:,} IV:{oi.ce_iv:.1f} | "
-                    f"PE OI:{oi.pe_oi:,} Vol:{oi.pe_volume:,} IV:{oi.pe_iv:.1f} | "
-                    f"PCR:{oi.pcr_at_strike:.2f}"
+                    f"Strike {oi.strike}{marker} | CE OI:{oi.ce_oi:,} PE OI:{oi.pe_oi:,} | PCR:{oi.pcr_at_strike:.2f}"
                 )
             
             oi_text = "\n".join(oi_table)
             
-            # Format OI changes
-            oi_changes_text = "No previous data (First scan)"
-            if oi_comparison.get('deltas'):
-                changes = []
-                for d in oi_comparison['deltas'][:10]:
-                    ce_change_pct = (d['ce_oi_change'] / d['ce_oi'] * 100) if d['ce_oi'] > 0 else 0
-                    pe_change_pct = (d['pe_oi_change'] / d['pe_oi'] * 100) if d['pe_oi'] > 0 else 0
-                    
-                    changes.append(
-                        f"Strike {d['strike']} | "
-                        f"CE: {d['ce_oi_change']:+,} ({ce_change_pct:+.1f}%) OI:{d['ce_oi']:,} | "
-                        f"PE: {d['pe_oi_change']:+,} ({pe_change_pct:+.1f}%) OI:{d['pe_oi']:,} | "
-                        f"PCR:{d['pcr_at_strike']:.2f}"
-                    )
-                
-                oi_changes_text = "\n".join(changes)
+            # Strike-wise Flow
+            flow_summary = oi_comparison.get('flow_summary', {})
+            flow_parts = []
+            for flow_type in ['LONG_BUILDUP', 'SHORT_BUILDUP', 'LONG_UNWINDING', 'SHORT_COVERING']:
+                items = flow_summary.get(flow_type, [])
+                if items:
+                    flow_parts.append(f"{flow_type}: {len(items)} strikes")
             
-            # Calculate PCR
+            flow_text = ", ".join(flow_parts) if flow_parts else "First scan"
+            
+            # PCR
             total_ce_oi = sum(oi.ce_oi for oi in oi_data)
             total_pe_oi = sum(oi.pe_oi for oi in oi_data)
             pcr = total_pe_oi / total_ce_oi if total_ce_oi > 0 else 0
             
-            # Max Pain
-            max_pain = spot_price
-            if oi_data:
-                pain_values = {}
-                for strike_point in [oi.strike for oi in oi_data]:
-                    total_pain = 0
-                    for oi in oi_data:
-                        if oi.strike < strike_point:
-                            total_pain += (strike_point - oi.strike) * oi.pe_oi
-                        else:
-                            total_pain += (oi.strike - strike_point) * oi.ce_oi
-                    pain_values[strike_point] = total_pain
-                max_pain = min(pain_values, key=pain_values.get)
+            # Levels
+            levels_1h = levels_dict.get('1h', {})
+            levels_entry = levels_dict.get(base_tf, {})
             
-            # DeepSeek V3 API Call
+            # Trends
+            trend_1h = ChartAnalyzer.identify_trend(mtf_data.get('1h', mtf_data[base_tf]))
+            trend_entry = ChartAnalyzer.identify_trend(mtf_data[base_tf])
+            
+            # DeepSeek API
             url = "https://api.deepseek.com/v1/chat/completions"
             headers = {
                 "Authorization": f"Bearer {Config.DEEPSEEK_API_KEY}",
                 "Content-Type": "application/json"
             }
             
-            prompt = f"""You are an expert Indian equity and options trader analyzing {symbol} stock.
+            prompt = f"""Analyze {symbol} for options trading.
 
-═══════════════════════════════════════════════════════════════════
-📊 CURRENT MARKET DATA
-═══════════════════════════════════════════════════════════════════
-Stock: {symbol}
-Current Spot Price: Rs {spot_price:.2f}
-ATM Strike: {atm_strike}
-Trend: {trend}
+CURRENT DATA:
+Spot: Rs {spot_price:.2f} | ATM: {atm_strike}
+1H Trend: {trend_1h} | {base_tf.upper()} Trend: {trend_entry}
 
-═══════════════════════════════════════════════════════════════════
-📈 CHART LEVELS (Last 5 Days Analysis)
-═══════════════════════════════════════════════════════════════════
-Swing High: Rs {chart_levels.get('swing_high', spot_price * 1.02):.2f}
-Swing Low: Rs {chart_levels.get('swing_low', spot_price * 0.98):.2f}
-Nearest Support: Rs {chart_levels.get('nearest_support', spot_price * 0.98):.2f}
-Nearest Resistance: Rs {chart_levels.get('nearest_resistance', spot_price * 1.02):.2f}
+{agg_text}
 
-═══════════════════════════════════════════════════════════════════
-🕯️ LAST 20 CANDLESTICKS (15-min timeframe from 5 days data)
-═══════════════════════════════════════════════════════════════════
-Bullish Candles: {bullish_count}/{len(last_50)} | Bearish: {bearish_count}/{len(last_50)}
-Strong Candles (Last 10): {strong_candles}/10
+PATTERNS (Last 10 {base_tf}):
+{patterns_text}
 
-Detailed Candles:
-{candles_text}
+Strong Patterns: {', '.join([f"{k}({v})" for k, v in pattern_types.items()]) if pattern_types else "None"}
 
-═══════════════════════════════════════════════════════════════════
-⛓️ OPTION CHAIN DATA (ATM ± 11 Strikes)
-═══════════════════════════════════════════════════════════════════
-Total Strikes Analyzed: {len(oi_data)}
-Overall PCR: {pcr:.2f}
-Max Pain: Rs {max_pain:.2f}
-Total CE OI: {total_ce_oi:,}
-Total PE OI: {total_pe_oi:,}
-
-Strike-wise Data:
+OPTION CHAIN (Top 8 Strikes):
 {oi_text}
 
-═══════════════════════════════════════════════════════════════════
-📊 OI CHANGES (vs Previous Scan - Top 10)
-═══════════════════════════════════════════════════════════════════
-{oi_changes_text}
+STRIKE-WISE OI FLOW: {flow_text}
 
-═══════════════════════════════════════════════════════════════════
-🎯 ANALYSIS TASK
-═══════════════════════════════════════════════════════════════════
+SUPPORT/RESISTANCE:
+1H: Support={levels_1h.get('nearest_support', 'N/A')} Resistance={levels_1h.get('nearest_resistance', 'N/A')}
+{base_tf.upper()}: Support={levels_entry.get('nearest_support', 'N/A')} Resistance={levels_entry.get('nearest_resistance', 'N/A')}
 
-Analyze the above data comprehensively and provide:
+Analyze comprehensively using AGGREGATE OI/VOLUME data (most important) + patterns + strike-wise flow.
 
-1. **PRICE ACTION ANALYSIS**: What is the story told by last 20 candles? Any rejections, breakouts, or consolidations?
-
-2. **OPTION CHAIN INSIGHTS**: 
-   - Where is the highest CE OI buildup? (Resistance)
-   - Where is the highest PE OI buildup? (Support)
-   - Are there significant OI changes showing smart money positioning?
-   - Is PCR bullish (>1.2) or bearish (<0.8)?
-
-3. **SUPPORT/RESISTANCE CONFIRMATION**:
-   - Does OI data confirm chart support/resistance levels?
-   - Is price respecting key levels?
-
-4. **TRADE SETUP**:
-   - Should we buy PE (bearish bet) or CE (bullish bet)?
-   - Entry at CURRENT SPOT PRICE: Rs {spot_price:.2f}
-   - Target based on nearest support/resistance
-   - Stop Loss based on swing high/low
-   - Which strike to trade? (closest to ATM)
-
-5. **RISK ASSESSMENT**:
-   - What is the probability of this trade working?
-   - What could go wrong?
-
-═══════════════════════════════════════════════════════════════════
-CRITICAL RULES:
-═══════════════════════════════════════════════════════════════════
-✅ Entry MUST be current spot price: Rs {spot_price:.2f}
-✅ Target should be realistic (nearest strong support/resistance)
-✅ Stop Loss should be beyond swing high/low
-✅ Consider both chart pattern AND option chain signals
-✅ If contradicting signals, choose WAIT
-✅ Minimum Risk:Reward should be 1:2
-
-═══════════════════════════════════════════════════════════════════
-Reply STRICTLY in JSON format (no markdown, no code blocks):
-═══════════════════════════════════════════════════════════════════
+Reply STRICTLY in JSON (no markdown):
 
 {{
-  "opportunity": "PE_BUY",
-  "confidence": 85,
+  "opportunity": "PE_BUY or CE_BUY or WAIT",
+  "confidence": 75,
+  "scoring_breakup": {{
+    "chart_setup": 22,
+    "option_flow": 25,
+    "risk_management": 16,
+    "probability": 12
+  }},
   "recommended_strike": {int(atm_strike)},
   "entry_price": {spot_price:.2f},
-  "target": 1380.00,
-  "stop_loss": 1410.00,
-  "risk_reward": "1:3.5",
-  "chart_signal": "Bearish - Multiple rejections at resistance, forming lower highs",
-  "oi_signal": "Strong PE buildup at 1400 PE (+15000 OI), CE unwinding at 1420 CE (-8000 OI)",
-  "key_levels": "Support: 1380, Resistance: 1410",
-  "reasoning": "Price rejected at 1410 resistance 3 times in last 10 candles with increasing selling pressure. OI data confirms bearish setup with PE accumulation at lower strikes and CE unwinding at higher strikes. PCR of 0.65 shows call writers dominating. Entry at current 1395, targeting 1380 support (nearest strong level), SL above 1410 swing high.",
-  "probability": "High (75-80%)",
-  "risk_factors": "Sudden reversal if breaks above 1410, low volatility may reduce option premiums"
+  "target": {spot_price * 1.02:.2f},
+  "stop_loss": {spot_price * 0.98:.2f},
+  "risk_reward": "1:2",
+  "timeframe_confluence": "Brief trend alignment",
+  "pattern_signal": "Key pattern",
+  "oi_flow_signal": "Aggregate OI summary",
+  "key_levels": "Support/resistance",
+  "reasoning": "Why this trade",
+  "probability": "70%",
+  "risk_factors": ["Risk 1", "Risk 2"]
 }}
 
-IMPORTANT: Use ACTUAL numbers from the data above. Do NOT use placeholder values."""
+CRITICAL: Use AGGREGATE OI/VOLUME changes as primary signal. Reply ONLY JSON."""
 
             payload = {
                 "model": "deepseek-chat",
                 "messages": [
-                    {
-                        "role": "system", 
-                        "content": "You are an expert equity and options trader. Analyze chart patterns, candlestick data, and option chain comprehensively. Provide actionable trading signals with proper risk management. Reply in JSON format only."
-                    },
-                    {
-                        "role": "user", 
-                        "content": prompt
-                    }
+                    {"role": "system", "content": "Expert trader. Reply ONLY valid JSON. No markdown."},
+                    {"role": "user", "content": prompt}
                 ],
                 "temperature": 0.2,
-                "max_tokens": 2000
+                "max_tokens": 1500
             }
             
             response = requests.post(url, json=payload, headers=headers, timeout=45)
             
             if response.status_code != 200:
-                logger.error(f"❌ DeepSeek API error: {response.status_code}")
-                logger.error(f"Response: {response.text}")
+                logger.error(f"❌ DeepSeek error: {response.status_code}")
                 return None
             
             result = response.json()
             content = result['choices'][0]['message']['content'].strip()
             
-            # Extract JSON from response
-            import re
-            json_match = re.search(r'\{.*\}', content, re.DOTALL)
-            if json_match:
-                analysis = json.loads(json_match.group())
-                
-                # Validate required fields
-                required_fields = ['opportunity', 'confidence', 'entry_price', 'target', 'stop_loss']
-                if all(field in analysis for field in required_fields):
-                    logger.info(f"✅ DeepSeek V3: {analysis['opportunity']} | "
-                              f"Confidence: {analysis['confidence']}% | "
-                              f"Entry: {analysis['entry_price']} | "
-                              f"Target: {analysis['target']} | "
-                              f"SL: {analysis['stop_loss']}")
-                    return analysis
-                else:
-                    logger.warning(f"⚠️ Missing required fields in DeepSeek response")
-                    return None
+            analysis = DeepSeekAnalyzer.extract_json_from_response(content)
             
-            logger.warning("⚠️ Could not parse JSON from DeepSeek response")
-            logger.warning(f"Raw response: {content[:500]}")
-            return None
+            if not analysis:
+                logger.warning(f"⚠️ Parse failed. Raw (300 chars): {content[:300]}")
+                return None
+            
+            required = ['opportunity', 'confidence', 'entry_price', 'target', 'stop_loss']
+            if all(f in analysis for f in required):
+                logger.info(f"✅ DeepSeek: {analysis['opportunity']} | Confidence: {analysis['confidence']}%")
+                return analysis
+            else:
+                missing = [f for f in required if f not in analysis]
+                logger.warning(f"⚠️ Missing: {missing}")
+                return None
             
         except Exception as e:
-            logger.error(f"❌ DeepSeek V3 analysis error: {e}")
+            logger.error(f"❌ DeepSeek error: {e}")
             logger.error(traceback.format_exc())
             return None
 
@@ -850,16 +1112,17 @@ IMPORTANT: Use ACTUAL numbers from the data above. Do NOT use placeholder values
 # CHART GENERATOR
 # ========================
 class ChartGenerator:
-    """Generate trading charts"""
+    """Generate charts"""
     
     @staticmethod
-    def create_chart(df: pd.DataFrame, symbol: str, entry: float, target: float, 
-                    stop_loss: float, opportunity: str) -> BytesIO:
-        """Create candlestick chart with levels"""
+    def create_mtf_chart(mtf_data: Dict, symbol: str, entry: float, 
+                        target: float, stop_loss: float, opportunity: str) -> BytesIO:
+        """Create chart (16x9)"""
         try:
             logger.info(f"📊 Generating chart for {symbol}")
             
-            chart_df = df.tail(50).copy()
+            base_tf = '5m' if '5m' in mtf_data else '15m'
+            chart_df = mtf_data[base_tf].tail(100).copy()
             
             mc = mpf.make_marketcolors(
                 up='green', down='red',
@@ -889,12 +1152,12 @@ class ChartGenerator:
                 chart_df,
                 type='candle',
                 style=s,
-                title=f"{symbol} - {opportunity}",
+                title=f"{symbol} - {opportunity} ({base_tf.upper()})",
                 ylabel='Price (₹)',
-                volume=False,
+                volume=True,
                 hlines=hlines,
                 returnfig=True,
-                figsize=(6, 4),
+                figsize=(16, 9),
                 tight_layout=True
             )
             
@@ -902,32 +1165,25 @@ class ChartGenerator:
             current_price = chart_df['close'].iloc[-1]
             
             ax.text(len(chart_df), entry, f' Entry: ₹{entry:.2f}', 
-                   color='blue', fontweight='bold', va='center', fontsize=8)
+                   color='blue', fontweight='bold', va='center', fontsize=10)
             ax.text(len(chart_df), target, f' Target: ₹{target:.2f}', 
-                   color='green', fontweight='bold', va='center', fontsize=8)
+                   color='green', fontweight='bold', va='center', fontsize=10)
             ax.text(len(chart_df), stop_loss, f' SL: ₹{stop_loss:.2f}', 
-                   color='red', fontweight='bold', va='center', fontsize=8)
-            ax.axhline(y=current_price, color='orange', linestyle=':', linewidth=1.5, alpha=0.7)
-            ax.text(len(chart_df), current_price, f' Now: ₹{current_price:.2f}', 
-                   color='orange', fontweight='bold', va='center', fontsize=8)
+                   color='red', fontweight='bold', va='center', fontsize=10)
+            ax.axhline(y=current_price, color='orange', linestyle=':', linewidth=2, alpha=0.7)
+            ax.text(len(chart_df), current_price, f' Current: ₹{current_price:.2f}', 
+                   color='orange', fontweight='bold', va='center', fontsize=10)
             
             buf = BytesIO()
-            fig.savefig(
-                buf, 
-                format='png', 
-                dpi=100,
-                bbox_inches='tight', 
-                facecolor='white',
-                pad_inches=0.05
-            )
+            fig.savefig(buf, format='png', dpi=100, bbox_inches='tight', facecolor='white')
             buf.seek(0)
             plt.close(fig)
             
-            logger.info(f"✅ Chart generated for {symbol}")
+            logger.info(f"✅ Chart generated")
             return buf
             
         except Exception as e:
-            logger.error(f"❌ Chart generation error: {e}")
+            logger.error(f"❌ Chart error: {e}")
             return None
 
 
@@ -935,20 +1191,21 @@ class ChartGenerator:
 # MAIN BOT
 # ========================
 class AdvancedFOBot:
-    """Advanced NIFTY 50 Trading Bot with DeepSeek V3"""
+    """Advanced NIFTY 50 Bot v7.2"""
     
     def __init__(self):
-        logger.info("🔧 Initializing NIFTY 50 Trading Bot v6.0...")
+        logger.info("🔧 Initializing Bot v7.2...")
         self.bot = Bot(token=Config.TELEGRAM_BOT_TOKEN)
         self.redis = RedisCache()
         self.dhan = DhanAPI(self.redis)
-        self.chart_analyzer = EnhancedChartAnalyzer()
+        self.pattern_detector = AdvancedPatternDetector()
+        self.chart_analyzer = ChartAnalyzer()
         self.chart_generator = ChartGenerator()
         self.running = True
-        logger.info("✅ NIFTY 50 Bot v6.0 initialized")
+        logger.info("✅ Bot v7.2 initialized")
     
     def is_market_open(self) -> bool:
-        """Check if market is open"""
+        """Check market hours"""
         ist = pytz.timezone('Asia/Kolkata')
         now_ist = datetime.now(ist)
         current_time = now_ist.strftime("%H:%M")
@@ -959,212 +1216,167 @@ class AdvancedFOBot:
         return Config.MARKET_OPEN <= current_time <= Config.MARKET_CLOSE
     
     def escape_html(self, text: str) -> str:
-        """Escape HTML special characters"""
+        """Escape HTML"""
         return html.escape(str(text))
     
     async def scan_symbol(self, symbol: str, info: Dict):
-        """Comprehensive scan with DeepSeek V3 analysis"""
+        """Comprehensive scan"""
         try:
             security_id = info['security_id']
             segment = info['segment']
+            instrument_type = info['instrument_type']
             
             logger.info(f"\n{'='*70}")
-            logger.info(f"🔍 SCANNING: {symbol}")
+            logger.info(f"🔍 SCANNING: {symbol} ({instrument_type})")
             logger.info(f"{'='*70}")
             
-            # Get expiry
             expiry = self.dhan.get_nearest_expiry(security_id, segment)
             if not expiry:
-                logger.warning(f"⚠️ {symbol}: No F&O available - SKIP")
+                logger.warning(f"⚠️ {symbol}: No F&O - SKIP")
                 return
             
-            logger.info(f"📅 Expiry: {expiry}")
-            
-            # Get last 5 days candles
-            candles_df = self.dhan.get_historical_candles(
-                security_id, segment, symbol, 
-                lookback_days=Config.LOOKBACK_DAYS
-            )
-            
-            if candles_df is None or len(candles_df) < 50:
-                logger.warning(f"⚠️ {symbol}: Insufficient candles - SKIP")
+            mtf_data = self.dhan.get_multi_timeframe_data(security_id, segment, symbol, instrument_type)
+            if not mtf_data:
+                logger.warning(f"⚠️ {symbol}: No MTF data - SKIP")
                 return
             
-            spot_price = candles_df['close'].iloc[-1]
-            logger.info(f"💰 Spot Price: ₹{spot_price:,.2f}")
+            base_tf = '5m' if '5m' in mtf_data else '15m'
+            spot_price = mtf_data[base_tf]['close'].iloc[-1]
+            logger.info(f"💰 Spot: ₹{spot_price:.2f}")
             
-            # Analyze all candles
-            logger.info(f"📈 Analyzing last 5 days candles...")
-            candle_patterns = self.chart_analyzer.analyze_last_5_days_candles(candles_df)
-            trend = self.chart_analyzer.identify_trend(candles_df)
-            chart_levels = self.chart_analyzer.calculate_dynamic_levels(candles_df)
+            if len(mtf_data[base_tf]) < 30:
+                logger.warning(f"⚠️ {symbol}: Insufficient data - SKIP")
+                return
             
-            logger.info(f"📊 Trend: {trend}")
-            logger.info(f"📍 Chart Levels: Support={chart_levels.get('nearest_support', 0):.2f}, "
-                       f"Resistance={chart_levels.get('nearest_resistance', 0):.2f}")
+            patterns_dict = {}
+            levels_dict = {}
             
-            # Get option chain (ATM ± 11 strikes)
-            logger.info(f"⛓️ Fetching ATM ± {Config.ATM_STRIKE_RANGE} strikes...")
+            for tf, df in mtf_data.items():
+                patterns = self.pattern_detector.detect_patterns(df)
+                levels = self.chart_analyzer.calculate_support_resistance(df)
+                patterns_dict[tf] = patterns
+                levels_dict[tf] = levels
+                
+                supp = levels.get('nearest_support', 0)
+                logger.info(f"📊 {tf}: {len(patterns)} patterns, Supp={supp:.2f}")
+            
             oi_data = self.dhan.get_option_chain(security_id, segment, expiry, symbol, spot_price)
-            
             if not oi_data or len(oi_data) < 10:
-                logger.warning(f"⚠️ {symbol}: Insufficient option data - SKIP")
+                logger.warning(f"⚠️ {symbol}: No OI data - SKIP")
                 return
             
-            # Compare with previous OI
-            oi_comparison = self.redis.get_oi_comparison(symbol, oi_data)
+            oi_comparison = self.redis.get_oi_comparison(symbol, oi_data, spot_price)
             self.redis.store_option_chain(symbol, oi_data, spot_price)
             
-            logger.info(f"📊 OI Comparison: {len(oi_comparison.get('deltas', []))} significant changes")
+            aggregate = oi_comparison.get('aggregate_analysis')
+            if aggregate:
+                logger.info(f"📊 Aggregate: CE OI {aggregate.ce_oi_change_pct:+.2f}%, PE OI {aggregate.pe_oi_change_pct:+.2f}% | Sentiment: {aggregate.overall_sentiment}")
+            else:
+                logger.info(f"📊 Aggregate: First scan")
             
-            # DeepSeek V3 Deep Analysis
-            logger.info(f"🤖 Running DeepSeek V3 comprehensive analysis...")
-            analysis = DeepSeekV3Analyzer.create_comprehensive_analysis(
-                symbol, spot_price, candle_patterns, oi_data, 
-                oi_comparison, chart_levels, trend
+            analysis = DeepSeekAnalyzer.create_analysis(
+                symbol, spot_price, mtf_data, patterns_dict, 
+                oi_data, oi_comparison, levels_dict
             )
             
             if not analysis:
-                logger.warning(f"⚠️ {symbol}: No AI analysis - SKIP")
+                logger.warning(f"⚠️ {symbol}: No analysis - SKIP")
                 return
             
-            # Check confidence
             if analysis['confidence'] < Config.CONFIDENCE_THRESHOLD:
-                logger.info(f"⏸️ {symbol}: Low confidence ({analysis['confidence']}%) - NO ALERT")
+                logger.info(f"⏸️ {symbol}: Low confidence ({analysis['confidence']}%)")
                 return
             
-            # Generate chart
-            chart_image = self.chart_generator.create_chart(
-                candles_df, symbol,
+            chart_image = self.chart_generator.create_mtf_chart(
+                mtf_data, symbol,
                 analysis.get('entry_price', spot_price),
                 analysis.get('target', spot_price * 1.03),
                 analysis.get('stop_loss', spot_price * 0.97),
                 analysis['opportunity']
             )
             
-            # Send alert
-            alert_sent = await self.send_trading_alert(
-                symbol, spot_price, analysis, chart_levels, 
-                oi_data, oi_comparison, expiry, chart_image
-            )
+            await self.send_alert(symbol, spot_price, analysis, mtf_data, 
+                                 oi_data, oi_comparison, expiry, chart_image)
             
-            if alert_sent:
-                logger.info(f"✅ {symbol}: ALERT SENT SUCCESSFULLY! 🎉")
-            else:
-                logger.warning(f"⚠️ {symbol}: Alert sending failed")
-            
+            logger.info(f"✅ {symbol}: ALERT SENT! 🎉")
             logger.info(f"{'='*70}\n")
             
         except Exception as e:
-            logger.error(f"❌ Error scanning {symbol}: {e}")
+            logger.error(f"❌ Scan error {symbol}: {e}")
             logger.error(traceback.format_exc())
     
-    async def send_trading_alert(self, symbol: str, spot_price: float, analysis: Dict,
-                                chart_levels: Dict, oi_data: List[OIData], 
-                                oi_comparison: Dict, expiry: str, chart_image: BytesIO):
-        """Send comprehensive trading alert"""
+    async def send_alert(self, symbol: str, spot_price: float, analysis: Dict,
+                        mtf_data: Dict, oi_data: List[OIData], 
+                        oi_comparison: Dict, expiry: str, chart_image: BytesIO):
+        """Send alert"""
         try:
-            # Signal emoji
             signal_map = {
                 "PE_BUY": ("🔴", "PE BUY"),
                 "CE_BUY": ("🟢", "CE BUY"),
                 "WAIT": ("⚪", "WAIT")
             }
             
-            signal_emoji, signal_text = signal_map.get(
-                analysis['opportunity'], 
-                ("⚪", "WAIT")
-            )
+            signal_emoji, signal_text = signal_map.get(analysis['opportunity'], ("⚪", "WAIT"))
             
-            # Safe HTML escaping
             def safe(val):
                 return self.escape_html(val)
             
             ist_time = datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%H:%M')
             
-            # Calculate R:R
             entry = analysis.get('entry_price', spot_price)
             target = analysis.get('target', spot_price * 1.03)
             sl = analysis.get('stop_loss', spot_price * 0.97)
-            risk = abs(entry - sl)
-            reward = abs(target - entry)
-            rr_ratio = f"1:{reward/risk:.1f}" if risk > 0 else "N/A"
             
-            # Calculate PCR
-            total_ce = sum(oi.ce_oi for oi in oi_data)
-            total_pe = sum(oi.pe_oi for oi in oi_data)
-            pcr = total_pe / total_ce if total_ce > 0 else 0
+            aggregate = oi_comparison.get('aggregate_analysis')
+            if aggregate:
+                agg_summary = f"CE {aggregate.ce_oi_change_pct:+.1f}% PE {aggregate.pe_oi_change_pct:+.1f}%"
+                sentiment = aggregate.overall_sentiment
+            else:
+                agg_summary = "First scan"
+                sentiment = "N/A"
             
-            # Short caption for chart
-            short_caption = f"""
-📊 🚀 <b>{safe(symbol)}</b> {signal_emoji}
+            caption = f"""
+📊 <b>{safe(symbol)}</b> {signal_emoji} <b>{signal_text}</b>
 
-<b>{signal_text}</b> | Confidence: {safe(analysis['confidence'])}%
+Confidence: {safe(analysis['confidence'])}% | Sentiment: {sentiment}
+Entry: ₹{safe(f'{entry:.2f}')} → Target: ₹{safe(f'{target:.2f}')} | SL: ₹{safe(f'{sl:.2f}')}
+Strike: {safe(analysis.get('recommended_strike', 'N/A'))} | Expiry: {expiry}
 
-📊 <b>CHART LEVELS (from 5-day data):</b>
-Spot: Rs {safe(f'{spot_price:.2f}')}
-Entry: Rs {safe(f'{entry:.2f}')}
-Target: Rs {safe(f'{target:.2f}')} 
-SL: Rs {safe(f'{sl:.2f}')}
-Risk:Reward = {safe(rr_ratio)}
-
-📈 Trend: {safe(analysis.get('chart_signal', 'N/A')[:50])} | PCR: {pcr:.2f}
-⏰ {ist_time} IST
+OI Change: {agg_summary}
+⏰ {ist_time} IST | v7.2
 """
             
-            # Try sending chart
-            photo_sent = False
             if chart_image:
                 try:
                     await self.bot.send_photo(
                         chat_id=Config.TELEGRAM_CHAT_ID,
                         photo=chart_image,
-                        caption=short_caption.strip(),
+                        caption=caption.strip(),
                         parse_mode='HTML'
                     )
-                    photo_sent = True
-                    logger.info("✅ Chart sent")
                 except Exception as e:
-                    logger.error(f"❌ Chart upload failed: {e}")
-            
-            if not photo_sent:
-                await self.bot.send_message(
-                    chat_id=Config.TELEGRAM_CHAT_ID,
-                    text=f"{short_caption.strip()}\n\n⚠️ Chart generation skipped",
-                    parse_mode='HTML'
-                )
-            
-            # Detailed analysis message
-            support = chart_levels.get('nearest_support', 'N/A')
-            resistance = chart_levels.get('nearest_resistance', 'N/A')
-            
-            # Top OI change
-            oi_summary = "First scan"
-            if oi_comparison.get('deltas'):
-                top = oi_comparison['deltas'][0]
-                oi_summary = f"Strike {top['strike']}: CE {top['ce_oi_change']:+,} PE {top['pe_oi_change']:+,}"
+                    logger.error(f"❌ Chart failed: {e}")
+                    await self.bot.send_message(
+                        chat_id=Config.TELEGRAM_CHAT_ID,
+                        text=caption.strip(),
+                        parse_mode='HTML'
+                    )
             
             detailed = f"""
-📊 <b>{safe(symbol)} Analysis</b>
+📈 <b>Details</b>
 
-📈 <b>Chart:</b>
-Support: Rs{safe(f'{support:.2f}' if isinstance(support, (int, float)) else support)} | Resist: Rs{safe(f'{resistance:.2f}' if isinstance(resistance, (int, float)) else resistance)}
-Pattern: {safe(analysis.get('chart_signal', 'N/A')[:80])}
+🕯️ Pattern: {safe(analysis.get('pattern_signal', 'N/A')[:100])}
 
-⛓️ <b>Options:</b>
-PCR {pcr:.2f} | Expiry: {expiry}
-Strike: {safe(analysis.get('recommended_strike', 'N/A'))}
+⛓️ OI: {safe(analysis.get('oi_flow_signal', 'N/A')[:150])}
 
-📊 <b>OI Change:</b>
-{safe(oi_summary)}
+🎯 MTF: {safe(analysis.get('timeframe_confluence', 'N/A')[:100])}
 
-🧠 <b>AI:</b>
-{safe(analysis.get('reasoning', 'Analysis')[:300])}
+💡 {safe(analysis.get('reasoning', 'N/A')[:200])}
 
-💡 <b>OI Signal:</b>
-{safe(analysis.get('oi_signal', 'N/A')[:150])}
+Score: {analysis.get('scoring_breakup', {}).get('chart_setup', 0)}/30 + 
+{analysis.get('scoring_breakup', {}).get('option_flow', 0)}/30
 
-⚡ Trade at own risk | DeepSeek V3
+🤖 DeepSeek V3 | Aggregate OI Analysis
 """
             
             await self.bot.send_message(
@@ -1173,41 +1385,35 @@ Strike: {safe(analysis.get('recommended_strike', 'N/A'))}
                 parse_mode='HTML'
             )
             
-            logger.info("✅ Alert sent successfully!")
+            logger.info("✅ Alert sent!")
             return True
             
         except Exception as e:
             logger.error(f"❌ Alert error: {e}")
-            logger.error(traceback.format_exc())
             return False
     
     async def send_startup_message(self):
-        """Send startup notification"""
+        """Startup notification"""
         try:
-            ist = pytz.timezone('Asia/Kolkata')
-            redis_status = "Connected" if self.redis.redis_client else "Disconnected"
+            redis_status = "✅" if self.redis.redis_client else "❌"
             
             msg = f"""
-🤖 <b>NIFTY 50 Trading Bot v6.0 Started!</b>
+🤖 <b>NIFTY 50 Bot v7.2 - ACTIVE</b>
 
-📊 Tracking: <b>50 NIFTY stocks</b>
-⏰ Scan Interval: <b>15 minutes</b>
-🎯 Confidence: <b>{Config.CONFIDENCE_THRESHOLD}%+</b>
-🔴 Redis: {redis_status}
+🆕 NEW FEATURES:
+✅ AGGREGATE OI/VOLUME Analysis (All strikes combined)
+✅ Total CE/PE OI percentage changes tracked
+✅ Total CE/PE Volume changes tracked
+✅ Overall market sentiment (Bullish/Bearish/Neutral)
+✅ Redis 24-hour expiry (better comparison)
+✅ Strike-wise OI threshold lowered (100 from 500)
 
-🔍 <b>Enhanced Features:</b>
-✅ Last 5 Days Full Candle Analysis
-✅ ATM ± 11 Strikes OI Analysis
-✅ DeepSeek V3 Deep Market Analysis
-✅ Chart Pattern Detection
-✅ Proper Entry/Target/SL Calculation
-✅ OI Change Tracking
-✅ Chart Generation (600x400px)
+📊 Stocks: {len(self.dhan.security_id_map)}/50
+⏰ Interval: 15 min
+🎯 Confidence: {Config.CONFIDENCE_THRESHOLD}%+
+🔴 Redis: {redis_status} (24h expiry)
 
-📈 <b>Loaded: {len(self.dhan.security_id_map)}/50 stocks</b>
-
-🚀 Status: <b>ACTIVE</b> ✅
-⏰ {datetime.now(ist).strftime('%Y-%m-%d %H:%M IST')}
+🚀 Status: <b>RUNNING</b>
 """
             
             await self.bot.send_message(
@@ -1220,12 +1426,11 @@ Strike: {safe(analysis.get('recommended_strike', 'N/A'))}
             logger.error(f"❌ Startup error: {e}")
     
     async def run(self):
-        """Main bot loop"""
+        """Main loop"""
         logger.info("="*70)
-        logger.info("🚀 NIFTY 50 BOT v6.0 - DEEPSEEK V3 ENHANCED")
+        logger.info("🚀 NIFTY 50 BOT v7.2 - AGGREGATE OI/VOLUME ANALYSIS")
         logger.info("="*70)
         
-        # Validate credentials
         missing = []
         for cred in ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID', 'DHAN_CLIENT_ID', 
                      'DHAN_ACCESS_TOKEN', 'DEEPSEEK_API_KEY']:
@@ -1236,7 +1441,6 @@ Strike: {safe(analysis.get('recommended_strike', 'N/A'))}
             logger.error(f"❌ Missing: {', '.join(missing)}")
             return
         
-        # Load securities
         success = await self.dhan.load_security_ids()
         if not success:
             logger.error("❌ Failed to load securities")
@@ -1245,7 +1449,7 @@ Strike: {safe(analysis.get('recommended_strike', 'N/A'))}
         await self.send_startup_message()
         
         logger.info("="*70)
-        logger.info("🎯 Bot RUNNING! Scanning every 15 minutes...")
+        logger.info("🎯 Bot RUNNING! Scanning every 15 min...")
         logger.info("="*70)
         
         while self.running:
@@ -1257,7 +1461,7 @@ Strike: {safe(analysis.get('recommended_strike', 'N/A'))}
                 
                 ist = pytz.timezone('Asia/Kolkata')
                 logger.info(f"\n{'='*70}")
-                logger.info(f"🔄 SCAN CYCLE START - {datetime.now(ist).strftime('%H:%M:%S')}")
+                logger.info(f"🔄 SCAN CYCLE - {datetime.now(ist).strftime('%H:%M:%S')}")
                 logger.info(f"{'='*70}")
                 
                 for idx, (symbol, info) in enumerate(self.dhan.security_id_map.items(), 1):
@@ -1266,7 +1470,7 @@ Strike: {safe(analysis.get('recommended_strike', 'N/A'))}
                     await asyncio.sleep(3)
                 
                 logger.info(f"\n{'='*70}")
-                logger.info(f"✅ CYCLE COMPLETE! Next scan in 15 min")
+                logger.info(f"✅ CYCLE COMPLETE! Next in 15 min")
                 logger.info(f"{'='*70}\n")
                 
                 await asyncio.sleep(Config.SCAN_INTERVAL)
@@ -1277,6 +1481,7 @@ Strike: {safe(analysis.get('recommended_strike', 'N/A'))}
                 break
             except Exception as e:
                 logger.error(f"❌ Loop error: {e}")
+                logger.error(traceback.format_exc())
                 await asyncio.sleep(60)
 
 
@@ -1295,7 +1500,7 @@ async def main():
 
 if __name__ == "__main__":
     logger.info("="*70)
-    logger.info("🎬 NIFTY 50 BOT v6.0 - DEEPSEEK V3 ENHANCED STARTING...")
+    logger.info("🎬 NIFTY 50 BOT v7.2 - STARTING...")
     logger.info("="*70)
     
     try:
@@ -1304,3 +1509,4 @@ if __name__ == "__main__":
         logger.info("\n🛑 Shutdown (Ctrl+C)")
     except Exception as e:
         logger.error(f"\n❌ Critical: {e}")
+        logger.error(traceback.format_exc())
