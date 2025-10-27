@@ -588,14 +588,14 @@ Reply JSON only:
             payload = {
                 "model": "deepseek-chat",
                 "messages": [
-                    {"role": "system", "content": "Quick trader. Reply JSON only."},
+                    {"role": "system", "content": "Expert trader. Reply JSON only."},
                     {"role": "user", "content": prompt}
                 ],
-                "temperature": 0.2,
-                "max_tokens": 300
+                "temperature": 0.3,
+                "max_tokens": 1500
             }
             
-            response = requests.post(url, json=payload, headers=headers, timeout=10)
+            response = requests.post(url, json=payload, headers=headers, timeout=45)
             
             if response.status_code != 200:
                 return None
@@ -603,7 +603,7 @@ Reply JSON only:
             result = response.json()
             content = result['choices'][0]['message']['content'].strip()
             
-            analysis_dict = QuickScanner.extract_json(content)
+            analysis_dict = DeepAnalyzer.extract_json(content)
             
             if not analysis_dict:
                 return None
@@ -1175,7 +1175,25 @@ if __name__ == "__main__":
         logger.info("\nShutdown (Ctrl+C)")
     except Exception as e:
         logger.error(f"\nCritical: {e}")
-        logger.error(traceback.format_exc()) None
+        logger.error(traceback.format_exc())": "Quick trader. Reply JSON only."},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.2,
+                "max_tokens": 300
+            }
+            
+            response = requests.post(url, json=payload, headers=headers, timeout=10)
+            
+            if response.status_code != 200:
+                return None
+            
+            result = response.json()
+            content = result['choices'][0]['message']['content'].strip()
+            
+            analysis_dict = QuickScanner.extract_json(content)
+            
+            if not analysis_dict:
+                return None
             
             opportunity = analysis_dict.get('opportunity', 'WAIT')
             confidence = analysis_dict.get('confidence', 0)
@@ -1208,7 +1226,8 @@ if __name__ == "__main__":
                 reason=analysis_dict.get('reason', 'N/A')
             )
             
-        except:
+        except Exception as e:
+            logger.error(f"Quick analysis error: {e}")
             return None
     
     @staticmethod
@@ -1232,6 +1251,20 @@ if __name__ == "__main__":
                         return json.loads(match.group(1))
                     except:
                         continue
+            
+            start_idx = content.find('{')
+            if start_idx != -1:
+                brace_count = 0
+                for i in range(start_idx, len(content)):
+                    if content[i] == '{':
+                        brace_count += 1
+                    elif content[i] == '}':
+                        brace_count -= 1
+                        if brace_count == 0:
+                            try:
+                                return json.loads(content[start_idx:i+1])
+                            except:
+                                break
             
             return None
         except:
@@ -1298,22 +1331,4 @@ Reply JSON:
             payload = {
                 "model": "deepseek-chat",
                 "messages": [
-                    {"role": "system", "content": "Expert trader. Reply JSON only."},
-                    {"role": "user", "content": prompt}
-                ],
-                "temperature": 0.3,
-                "max_tokens": 1500
-            }
-            
-            response = requests.post(url, json=payload, headers=headers, timeout=45)
-            
-            if response.status_code != 200:
-                return None
-            
-            result = response.json()
-            content = result['choices'][0]['message']['content'].strip()
-            
-            analysis_dict = DeepAnalyzer.extract_json(content)
-            
-            if not analysis_dict:
-                return
+                    {"role": "system", "content
