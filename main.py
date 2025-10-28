@@ -481,7 +481,6 @@ class DhanAPI:
             df = df.dropna()
             df.set_index('timestamp', inplace=True)
             
-            # Resample to 15 min
             df_15m = df.resample('15min').agg({
                 'open': 'first',
                 'high': 'max',
@@ -604,6 +603,160 @@ Reply JSON only:
             content = result['choices'][0]['message']['content'].strip()
             
             analysis_dict = QuickScanner.extract_json(content)
+            
+            if not analysis_dict:
+                return None
+            
+            opportunity = analysis_dict.get('opportunity', 'WAIT')
+            confidence = analysis_dict.get('confidence', 0)
+            
+            oi_divergence = abs(aggregate.pe_oi_change_pct - aggregate.ce_oi_change_pct)
+            
+            if opportunity == "PE_BUY":
+                volume_surge = aggregate.pe_volume_change_pct
+            elif opportunity == "CE_BUY":
+                volume_surge = aggregate.ce_volume_change_pct
+            else:
+                volume_surge = 0
+            
+            passed = (
+                confidence >= Config.PHASE1_CONFIDENCE_MIN and
+                oi_divergence >= Config.PHASE1_OI_DIVERGENCE_MIN and
+                volume_surge >= Config.PHASE1_VOLUME_MIN and
+                opportunity != "WAIT"
+            )
+            
+            return QuickAnalysis(
+                opportunity=opportunity,
+                confidence=confidence,
+                oi_divergence=oi_divergence,
+                volume_surge=volume_surge,
+                pcr=aggregate.pcr,
+                passed_phase1=passed,
+                reason=analysis_dict.get('reason', 'N/A')
+            )
+            
+        except Exception as e:
+            logger.error(f"Quick analysis error: {e}")
+            return None
+    
+    @staticmethod
+    def extract_json(content: str) -> Optional[Dict]:
+        try:
+            try:
+                return json.loads(content)
+            except:
+                pass
+            
+            patterns = [
+                r'```json\s*(\{.*?\})\s*```',
+                r'```\s*(\{.*?\})\s*```',
+                r'(\{[^{]*?"opportunity".*?\})',
+            ]
+            
+            for pattern in patterns:
+                match = re.search(pattern, content, re.DOTALL)
+                if match:
+                    try:
+                        return json.loads(match.group(1))
+                    except:
+                        continue
+            
+            start_idx = content.find('{')
+            if start_idx != -1:
+                brace_count = 0
+                for i in range(start_idx, len(content)):
+                    if content[i] == '{':
+                        brace_count += 1
+                    elif content[i] == '}':
+                        brace_count -= 1
+                        if brace_count == 0:
+                            try:
+                                return json.loads(content[start_idx:i+1])
+                            except:
+                                break
+            
+            return None
+        except:
+            return None
+
+
+class DeepAnalyzer:
+    """Phase 2: Deep analysis with advanced prompt"""
+    
+    @staticmethod
+    def deep_analysis(symbol: str, spot_price: float, df: pd.DataFrame,
+                     aggregate: AggregateOIAnalysis, structure: Dict, sr_levels: Dict) -> Optional[DeepAnalysis]:
+        try:
+            url = "https://api.deepseek.com/v1/chat/completions"
+            headers = {
+                "Authorization": f"Bearer {Config.DEEPSEEK_API_KEY}",
+                "Content-Type": "application/json"
+            }
+            
+            prompt = f"""DEEP analysis for {symbol} F&O trading.
+
+Spot: {spot_price:.2f}
+
+STRUCTURE: {structure['structure']} | {structure['bias']}
+
+SUPPORT: {', '.join([f"{s:.0f}" for s in sr_levels['supports'][:3]])}
+RESISTANCE: {', '.join([f"{r:.0f}" for r in sr_levels['resistances'][:3]])}
+
+OPTIONS:
+PCR: {aggregate.pcr:.2f}
+CE: {aggregate.ce_oi_change_pct:+.2f}% | Vol: {aggregate.ce_volume_change_pct:+.2f}%
+PE: {aggregate.pe_oi_change_pct:+.2f}% | Vol: {aggregate.pe_volume_change_pct:+.2f}%
+
+Score out of 125:
+- Chart: /50
+- Options: /50
+- Alignment: /25
+
+Reply JSON:
+{{
+  "opportunity": "PE_BUY or CE_BUY",
+  "confidence": 78,
+  "chart_score": 40,
+  "option_score": 42,
+  "alignment_score": 20,
+  "total_score": 102,
+  "entry_price": {spot_price:.2f},
+  "stop_loss": {spot_price * 0.995:.2f},
+  "target_1": {spot_price * 1.01:.2f},
+  "target_2": {spot_price * 1.02:.2f},
+  "risk_reward": "1:2",
+  "recommended_strike": {int(spot_price)},
+  "pattern_signal": "Pattern",
+  "oi_flow_signal": "OI flow",
+  "market_structure": "{structure['structure']}",
+  "support_levels": {sr_levels['supports'][:2]},
+  "resistance_levels": {sr_levels['resistances'][:2]},
+  "scenario_bullish": "If breaks X",
+  "scenario_bearish": "If breaks Y",
+  "risk_factors": ["Risk1", "Risk2"],
+  "monitoring_checklist": ["Check1", "Check2"]
+}}"""
+
+            payload = {
+                "model": "deepseek-chat",
+                "messages": [
+                    {"role": "system", "content": "Expert trader. Reply JSON only."},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.3,
+                "max_tokens": 1500
+            }
+            
+            response = requests.post(url, json=payload, headers=headers, timeout=45)
+            
+            if response.status_code != 200:
+                return None
+            
+            result = response.json()
+            content = result['choices'][0]['message']['content'].strip()
+            
+            analysis_dict = DeepAnalyzer.extract_json(content)
             
             if not analysis_dict:
                 return None
@@ -742,7 +895,8 @@ class ChartGenerator:
             
             return buf
             
-        except:
+        except Exception as e:
+            logger.error(f"Chart generation error: {e}")
             return None
 
 
@@ -794,24 +948,20 @@ class HybridNifty50Bot:
                 
                 security_id = info['security_id']
                 
-                # Get expiry
                 expiry = self.dhan.get_nearest_expiry(security_id)
                 if not expiry:
                     continue
                 
-                # Get basic chart data
                 df = self.dhan.get_chart_data(security_id, symbol)
                 if df is None or len(df) < 30:
                     continue
                 
                 spot_price = df['close'].iloc[-1]
                 
-                # Get option chain
                 oi_data = self.dhan.get_option_chain(security_id, expiry, spot_price)
                 if not oi_data or len(oi_data) < 10:
                     continue
                 
-                # OI comparison
                 oi_comparison = self.redis.get_oi_comparison(symbol, oi_data, spot_price)
                 self.redis.store_option_chain(symbol, oi_data, spot_price)
                 
@@ -819,7 +969,6 @@ class HybridNifty50Bot:
                 if not aggregate:
                     continue
                 
-                # Quick analysis
                 quick = self.quick_scanner.quick_analysis(symbol, spot_price, aggregate)
                 
                 if quick and quick.passed_phase1:
@@ -857,7 +1006,6 @@ class HybridNifty50Bot:
                 
                 security_id = info['security_id']
                 
-                # Get full chart data
                 df = self.dhan.get_chart_data(security_id, symbol)
                 if df is None or len(df) < 50:
                     logger.warning(f"{symbol}: Insufficient chart data")
@@ -865,13 +1013,11 @@ class HybridNifty50Bot:
                 
                 spot_price = df['close'].iloc[-1]
                 
-                # Advanced chart analysis
                 structure = self.chart_analyzer.identify_market_structure(df)
                 sr_levels = self.chart_analyzer.calculate_multi_touch_sr(df)
                 
                 logger.info(f"{symbol}: Structure={structure['structure']}, Bias={structure['bias']}")
                 
-                # Deep analysis
                 deep = self.deep_analyzer.deep_analysis(symbol, spot_price, df, aggregate, structure, sr_levels)
                 
                 if not deep:
@@ -880,7 +1026,6 @@ class HybridNifty50Bot:
                 
                 logger.info(f"{symbol}: Score={deep.total_score}/125 (Chart:{deep.chart_score} Opt:{deep.option_score} Align:{deep.alignment_score})")
                 
-                # Phase 2 filter
                 if deep.confidence < Config.PHASE2_CONFIDENCE_MIN:
                     logger.info(f"❌ {symbol}: Confidence {deep.confidence}% < {Config.PHASE2_CONFIDENCE_MIN}%")
                     continue
@@ -893,7 +1038,6 @@ class HybridNifty50Bot:
                     logger.info(f"❌ {symbol}: Alignment {deep.alignment_score} < {Config.PHASE2_ALIGNMENT_MIN}")
                     continue
                 
-                # Time filter
                 ist = pytz.timezone('Asia/Kolkata')
                 now_ist = datetime.now(ist)
                 hour = now_ist.hour
@@ -909,13 +1053,10 @@ class HybridNifty50Bot:
                 
                 logger.info(f"✅ {symbol}: PASSED Phase 2 - Generating alert!")
                 
-                # Get expiry
                 expiry = self.dhan.get_nearest_expiry(security_id)
                 
-                # Generate chart
                 chart_image = self.chart_gen.create_chart(df, symbol, deep)
                 
-                # Send alert
                 await self.send_alert(symbol, spot_price, deep, aggregate, expiry, chart_image)
                 
                 self.alerts_sent += 1
@@ -958,7 +1099,6 @@ class HybridNifty50Bot:
                         parse_mode='HTML'
                     )
             
-            # Detailed message
             supports_text = ", ".join([f"{s:.1f}" for s in analysis.support_levels[:2]])
             resistances_text = ", ".join([f"{r:.1f}" for r in analysis.resistance_levels[:2]])
             
@@ -1129,10 +1269,8 @@ Status: 🟢 RUNNING (HYBRID MODE)"""
                 logger.info(f"HYBRID SCAN CYCLE - {datetime.now(ist).strftime('%H:%M:%S')}")
                 logger.info(f"{'='*70}")
                 
-                # Phase 1: Quick scan
                 promising_stocks = await self.phase1_quick_scan()
                 
-                # Phase 2: Deep analysis
                 await self.phase2_deep_analysis(promising_stocks)
                 
                 logger.info(f"\n{'='*70}")
@@ -1175,145 +1313,4 @@ if __name__ == "__main__":
         logger.info("\nShutdown (Ctrl+C)")
     except Exception as e:
         logger.error(f"\nCritical: {e}")
-        logger.error(traceback.format_exc()) None
-            
-            opportunity = analysis_dict.get('opportunity', 'WAIT')
-            confidence = analysis_dict.get('confidence', 0)
-            
-            # Calculate metrics
-            oi_divergence = abs(aggregate.pe_oi_change_pct - aggregate.ce_oi_change_pct)
-            
-            if opportunity == "PE_BUY":
-                volume_surge = aggregate.pe_volume_change_pct
-            elif opportunity == "CE_BUY":
-                volume_surge = aggregate.ce_volume_change_pct
-            else:
-                volume_surge = 0
-            
-            # Phase 1 filter
-            passed = (
-                confidence >= Config.PHASE1_CONFIDENCE_MIN and
-                oi_divergence >= Config.PHASE1_OI_DIVERGENCE_MIN and
-                volume_surge >= Config.PHASE1_VOLUME_MIN and
-                opportunity != "WAIT"
-            )
-            
-            return QuickAnalysis(
-                opportunity=opportunity,
-                confidence=confidence,
-                oi_divergence=oi_divergence,
-                volume_surge=volume_surge,
-                pcr=aggregate.pcr,
-                passed_phase1=passed,
-                reason=analysis_dict.get('reason', 'N/A')
-            )
-            
-        except:
-            return None
-    
-    @staticmethod
-    def extract_json(content: str) -> Optional[Dict]:
-        try:
-            try:
-                return json.loads(content)
-            except:
-                pass
-            
-            patterns = [
-                r'```json\s*(\{.*?\})\s*```',
-                r'```\s*(\{.*?\})\s*```',
-                r'(\{[^{]*?"opportunity".*?\})',
-            ]
-            
-            for pattern in patterns:
-                match = re.search(pattern, content, re.DOTALL)
-                if match:
-                    try:
-                        return json.loads(match.group(1))
-                    except:
-                        continue
-            
-            return None
-        except:
-            return None
-
-
-class DeepAnalyzer:
-    """Phase 2: Deep analysis with advanced prompt"""
-    
-    @staticmethod
-    def deep_analysis(symbol: str, spot_price: float, df: pd.DataFrame,
-                     aggregate: AggregateOIAnalysis, structure: Dict, sr_levels: Dict) -> Optional[DeepAnalysis]:
-        try:
-            url = "https://api.deepseek.com/v1/chat/completions"
-            headers = {
-                "Authorization": f"Bearer {Config.DEEPSEEK_API_KEY}",
-                "Content-Type": "application/json"
-            }
-            
-            prompt = f"""DEEP analysis for {symbol} F&O trading.
-
-Spot: {spot_price:.2f}
-
-STRUCTURE: {structure['structure']} | {structure['bias']}
-
-SUPPORT: {', '.join([f"{s:.0f}" for s in sr_levels['supports'][:3]])}
-RESISTANCE: {', '.join([f"{r:.0f}" for r in sr_levels['resistances'][:3]])}
-
-OPTIONS:
-PCR: {aggregate.pcr:.2f}
-CE: {aggregate.ce_oi_change_pct:+.2f}% | Vol: {aggregate.ce_volume_change_pct:+.2f}%
-PE: {aggregate.pe_oi_change_pct:+.2f}% | Vol: {aggregate.pe_volume_change_pct:+.2f}%
-
-Score out of 125:
-- Chart: /50
-- Options: /50
-- Alignment: /25
-
-Reply JSON:
-{{
-  "opportunity": "PE_BUY or CE_BUY",
-  "confidence": 78,
-  "chart_score": 40,
-  "option_score": 42,
-  "alignment_score": 20,
-  "total_score": 102,
-  "entry_price": {spot_price:.2f},
-  "stop_loss": {spot_price * 0.995:.2f},
-  "target_1": {spot_price * 1.01:.2f},
-  "target_2": {spot_price * 1.02:.2f},
-  "risk_reward": "1:2",
-  "recommended_strike": {int(spot_price)},
-  "pattern_signal": "Pattern",
-  "oi_flow_signal": "OI flow",
-  "market_structure": "{structure['structure']}",
-  "support_levels": {sr_levels['supports'][:2]},
-  "resistance_levels": {sr_levels['resistances'][:2]},
-  "scenario_bullish": "If breaks X",
-  "scenario_bearish": "If breaks Y",
-  "risk_factors": ["Risk1", "Risk2"],
-  "monitoring_checklist": ["Check1", "Check2"]
-}}"""
-
-            payload = {
-                "model": "deepseek-chat",
-                "messages": [
-                    {"role": "system", "content": "Expert trader. Reply JSON only."},
-                    {"role": "user", "content": prompt}
-                ],
-                "temperature": 0.3,
-                "max_tokens": 1500
-            }
-            
-            response = requests.post(url, json=payload, headers=headers, timeout=45)
-            
-            if response.status_code != 200:
-                return None
-            
-            result = response.json()
-            content = result['choices'][0]['message']['content'].strip()
-            
-            analysis_dict = DeepAnalyzer.extract_json(content)
-            
-            if not analysis_dict:
-                return
+        logger.error(traceback.format_exc())
