@@ -1,6 +1,6 @@
 """
-🤖 ADVANCED NIFTY/SENSEX INDEX TRADING BOT v9.1
-Version: 9.1 - INDICES ONLY (NIFTY 50 + SENSEX)
+🤖 ADVANCED NIFTY/SENSEX INDEX TRADING BOT v9.0
+Version: 9.0 - INDICES ONLY (NIFTY 50 + SENSEX)
 Advanced Price Action + Option Chain Analysis
 Scan Interval: 5 minutes | Flexible Rules
 """
@@ -70,7 +70,7 @@ class Config:
     ATM_STRIKE_RANGE = 15  # Wider range for indices
     MIN_CANDLES_REQUIRED = 50
     
-    # INDICES ONLY - NIFTY 50 + SENSEX
+    # INDICES ONLY
     INDICES = {
         "NIFTY 50": {
             "symbol": "NIFTY 50",
@@ -78,7 +78,7 @@ class Config:
             "segment": "NSE_FNO",
             "instrument": "INDEX"
         },
-        "SENSEX": {
+       "SENSEX": {
             "symbol": "SENSEX",
             "security_id": 51,  # BSE SENSEX (Update if needed)
             "segment": "BSE_FNO",
@@ -155,9 +155,9 @@ class RedisCache:
                 socket_connect_timeout=5
             )
             self.redis_client.ping()
-            logger.info("✅ Redis connected successfully!")
+            logger.info("Redis connected!")
         except Exception as e:
-            logger.error(f"❌ Redis connection failed: {e}")
+            logger.error(f"Redis failed: {e}")
             self.redis_client = None
     
     def store_option_chain(self, symbol: str, oi_data: List[OIData], spot_price: float):
@@ -302,7 +302,7 @@ class RedisCache:
 class AdvancedChartAnalyzer:
     @staticmethod
     def identify_market_structure(df: pd.DataFrame) -> Dict:
-        """Identify Higher Highs, Higher Lows, Lower Highs, Lower Lows"""
+        """Identify Higher Highs, Higher Lows, etc."""
         try:
             if len(df) < 20:
                 return {"structure": "INSUFFICIENT_DATA", "bias": "NEUTRAL"}
@@ -341,7 +341,7 @@ class AdvancedChartAnalyzer:
     
     @staticmethod
     def find_order_blocks(df: pd.DataFrame) -> Dict:
-        """Find significant demand/supply zones (Order Blocks)"""
+        """Find significant demand/supply zones"""
         try:
             if len(df) < 30:
                 return {"bullish_ob": [], "bearish_ob": []}
@@ -470,7 +470,7 @@ class DhanAPI:
             'Content-Type': 'application/json'
         }
         self.redis = redis_cache
-        logger.info("✅ DhanAPI initialized for NIFTY 50 & SENSEX")
+        logger.info("DhanAPI initialized for INDICES")
     
     def get_nearest_expiry(self, security_id: int, segment: str) -> Optional[str]:
         try:
@@ -493,12 +493,12 @@ class DhanAPI:
             return None
             
         except Exception as e:
-            logger.error(f"Expiry fetch error: {e}")
+            logger.error(f"Expiry error: {e}")
             return None
     
     def get_multi_timeframe_data(self, security_id: int, segment: str, symbol: str) -> Optional[Dict[str, pd.DataFrame]]:
         try:
-            logger.info(f"📊 Fetching multi-timeframe data for {symbol}...")
+            logger.info(f"Fetching MTF data for {symbol}")
             
             ist = pytz.timezone('Asia/Kolkata')
             to_date = datetime.now(ist)
@@ -520,13 +520,13 @@ class DhanAPI:
             )
             
             if response.status_code != 200:
-                logger.error(f"❌ MTF data fetch failed: {response.status_code}")
+                logger.error(f"MTF data fetch failed: {response.status_code}")
                 return None
             
             data = response.json()
             
             if 'timestamp' not in data or len(data['open']) == 0:
-                logger.error("❌ No candle data in response")
+                logger.error("No candle data in response")
                 return None
             
             df_base = pd.DataFrame({
@@ -541,7 +541,7 @@ class DhanAPI:
             df_base = df_base.dropna()
             df_base.set_index('timestamp', inplace=True)
             
-            logger.info(f"✅ Received {len(df_base)} base candles for {symbol}")
+            logger.info(f"Received {len(df_base)} base candles")
             
             # Create multiple timeframes
             result = {}
@@ -563,12 +563,12 @@ class DhanAPI:
                 'volume': 'sum'
             }).dropna()
             
-            logger.info(f"📈 {symbol}: 5m={len(result['5m'])}, 15m={len(result['15m'])}, 1h={len(result['1h'])}")
+            logger.info(f"{symbol}: 5m={len(result['5m'])}, 15m={len(result['15m'])}, 1h={len(result['1h'])}")
             
             return result
             
         except Exception as e:
-            logger.error(f"❌ MTF data error: {e}")
+            logger.error(f"MTF data error: {e}")
             logger.error(traceback.format_exc())
             return None
     
@@ -589,12 +589,12 @@ class DhanAPI:
             )
             
             if response.status_code != 200:
-                logger.error(f"❌ Option chain fetch failed: {response.status_code}")
+                logger.error(f"Option chain fetch failed: {response.status_code}")
                 return None
             
             data = response.json()
             if not data.get('data'):
-                logger.error("❌ No option chain data")
+                logger.error("No option chain data")
                 return None
             
             oc_data = data['data'].get('oc', {})
@@ -602,7 +602,7 @@ class DhanAPI:
             strikes = [float(s) for s in oc_data.keys()]
             atm_strike = min(strikes, key=lambda x: abs(x - spot_price))
             
-            logger.info(f"💰 {symbol} ATM: {atm_strike} (Spot: {spot_price:.2f})")
+            logger.info(f"{symbol} ATM: {atm_strike} (Spot: {spot_price:.2f})")
             
             oi_list = []
             
@@ -610,8 +610,8 @@ class DhanAPI:
                 try:
                     strike = float(strike_str)
                     
-                    # Get strikes around ATM (within 5%)
-                    if abs(strike - atm_strike) > (atm_strike * 0.05):
+                    # Get strikes around ATM
+                    if abs(strike - atm_strike) > (atm_strike * 0.05):  # Within 5%
                         continue
                     
                     ce_data = strike_data.get('ce', {})
@@ -633,11 +633,11 @@ class DhanAPI:
                 except Exception:
                     continue
             
-            logger.info(f"✅ {symbol}: {len(oi_list)} strikes fetched")
+            logger.info(f"{symbol}: {len(oi_list)} strikes fetched")
             return oi_list
             
         except Exception as e:
-            logger.error(f"❌ Option chain error: {e}")
+            logger.error(f"Option chain error: {e}")
             return None
 
 
@@ -647,12 +647,12 @@ class DeepSeekAdvancedAnalyzer:
                                  oi_data: List[OIData], oi_comparison: Dict,
                                  structure: Dict, order_blocks: Dict, sr_levels: Dict) -> Optional[AdvancedAnalysis]:
         try:
-            logger.info(f"🤖 DeepSeek: Creating advanced analysis for {symbol}...")
+            logger.info(f"DeepSeek: Advanced analysis for {symbol}...")
             
             aggregate = oi_comparison.get('aggregate_analysis')
             
             if not aggregate:
-                logger.warning("⚠️ No aggregate OI data for advanced analysis")
+                logger.warning("No aggregate OI data for advanced analysis")
                 return None
             
             # Build comprehensive prompt
@@ -660,15 +660,15 @@ class DeepSeekAdvancedAnalyzer:
             
             ob_text = "Order Blocks:\n"
             for ob in order_blocks.get('bullish_ob', [])[:2]:
-                ob_text += f"  🟢 Bullish: {ob['level']:.0f} ({ob['strength']})\n"
+                ob_text += f"  Bullish: {ob['level']:.0f} ({ob['strength']})\n"
             for ob in order_blocks.get('bearish_ob', [])[:2]:
-                ob_text += f"  🔴 Bearish: {ob['level']:.0f} ({ob['strength']})\n"
+                ob_text += f"  Bearish: {ob['level']:.0f} ({ob['strength']})\n"
             
             sr_text = "Support/Resistance (Multi-touch):\n"
             for i, (s, t) in enumerate(zip(sr_levels['supports'][:3], sr_levels['support_tests'][:3])):
-                sr_text += f"  📉 Support: {s:.0f} ({t} tests)\n"
+                sr_text += f"  Support: {s:.0f} ({t} tests)\n"
             for i, (r, t) in enumerate(zip(sr_levels['resistances'][:3], sr_levels['resistance_tests'][:3])):
-                sr_text += f"  📈 Resistance: {r:.0f} ({t} tests)\n"
+                sr_text += f"  Resistance: {r:.0f} ({t} tests)\n"
             
             oi_text = f"""Option Chain Analysis:
 Total CE OI: {aggregate.total_ce_oi:,} (Change: {aggregate.ce_oi_change_pct:+.2f}%)
@@ -685,8 +685,7 @@ Sentiment: {aggregate.overall_sentiment}"""
             for oi in oi_sorted:
                 strikes_text += f"  {oi.strike:.0f}: CE {oi.ce_oi:,} | PE {oi.pe_oi:,} | PCR {oi.pcr_at_strike:.2f}\n"
             
-            url = "https://api.
-deepseek.com/v1/chat/completions"
+            url = "https://api.deepseek.com/v1/chat/completions"
             headers = {
                 "Authorization": f"Bearer {Config.DEEPSEEK_API_KEY}",
                 "Content-Type": "application/json"
@@ -795,7 +794,7 @@ IMPORTANT: Be realistic. If setup unclear or conflicting signals, say WAIT."""
             response = requests.post(url, json=payload, headers=headers, timeout=60)
             
             if response.status_code != 200:
-                logger.error(f"❌ DeepSeek API error: {response.status_code}")
+                logger.error(f"DeepSeek API error: {response.status_code}")
                 return None
             
             result = response.json()
@@ -805,13 +804,13 @@ IMPORTANT: Be realistic. If setup unclear or conflicting signals, say WAIT."""
             analysis_dict = DeepSeekAdvancedAnalyzer.extract_json(content)
             
             if not analysis_dict:
-                logger.error("❌ Failed to extract JSON from DeepSeek response")
+                logger.error("Failed to extract JSON from DeepSeek response")
                 return None
             
             # Validate required fields
             required = ['opportunity', 'confidence', 'chart_score', 'option_score', 'alignment_score']
             if not all(f in analysis_dict for f in required):
-                logger.error("❌ Missing required fields in analysis")
+                logger.error("Missing required fields in analysis")
                 return None
             
             analysis = AdvancedAnalysis(
@@ -839,18 +838,18 @@ IMPORTANT: Be realistic. If setup unclear or conflicting signals, say WAIT."""
                 monitoring_checklist=analysis_dict.get('monitoring_checklist', ['Monitor price action'])
             )
             
-            logger.info(f"✅ DeepSeek: {analysis.opportunity} | Confidence: {analysis.confidence}% | Score: {analysis.total_score}/125")
+            logger.info(f"DeepSeek: {analysis.opportunity} | Confidence: {analysis.confidence}% | Score: {analysis.total_score}/125")
             
             return analysis
             
         except Exception as e:
-            logger.error(f"❌ Advanced analysis error: {e}")
+            logger.error(f"Advanced analysis error: {e}")
             logger.error(traceback.format_exc())
             return None
     
     @staticmethod
     def extract_json(content: str) -> Optional[Dict]:
-        """Extract JSON from DeepSeek response"""
+        """Extract JSON from response"""
         try:
             # Try direct parse
             try:
@@ -891,7 +890,7 @@ IMPORTANT: Be realistic. If setup unclear or conflicting signals, say WAIT."""
             return None
             
         except Exception as e:
-            logger.error(f"❌ JSON extraction error: {e}")
+            logger.error(f"JSON extraction error: {e}")
             return None
 
 
@@ -899,7 +898,7 @@ class ChartGenerator:
     @staticmethod
     def create_chart(mtf_data: Dict, symbol: str, analysis: AdvancedAnalysis) -> Optional[BytesIO]:
         try:
-            logger.info(f"📊 Generating chart for {symbol}...")
+            logger.info(f"Generating chart for {symbol}")
             
             chart_df = mtf_data['15m'].tail(100).copy()
             
@@ -957,17 +956,17 @@ class ChartGenerator:
             buf.seek(0)
             plt.close(fig)
             
-            logger.info("✅ Chart generated successfully!")
+            logger.info("Chart generated")
             return buf
             
         except Exception as e:
-            logger.error(f"❌ Chart generation error: {e}")
+            logger.error(f"Chart error: {e}")
             return None
 
 
 class AdvancedIndexBot:
     def __init__(self):
-        logger.info("🚀 Initializing Advanced Index Bot v9.1...")
+        logger.info("Initializing Advanced Index Bot v9.0...")
         self.bot = Bot(token=Config.TELEGRAM_BOT_TOKEN)
         self.redis = RedisCache()
         self.dhan = DhanAPI(self.redis)
@@ -979,14 +978,14 @@ class AdvancedIndexBot:
         self.total_scans = 0
         self.alerts_sent = 0
         
-        logger.info("✅ Bot v9.1 initialized - NIFTY 50 & SENSEX ONLY")
+        logger.info("Bot v9.0 initialized - NIFTY/SENSEX ONLY")
     
     def is_market_open(self) -> bool:
         ist = pytz.timezone('Asia/Kolkata')
         now_ist = datetime.now(ist)
         current_time = now_ist.strftime("%H:%M")
         
-        if now_ist.weekday() >= 5:  # Saturday=5, Sunday=6
+        if now_ist.weekday() >= 5:
             return False
         
         return Config.MARKET_OPEN <= current_time <= Config.MARKET_CLOSE
@@ -999,7 +998,7 @@ class AdvancedIndexBot:
             self.total_scans += 1
             
             logger.info(f"\n{'='*70}")
-            logger.info(f"🔍 SCANNING: {index_name}")
+            logger.info(f"SCANNING: {index_name}")
             logger.info(f"{'='*70}")
             
             security_id = index_info['security_id']
@@ -1009,31 +1008,29 @@ class AdvancedIndexBot:
             # Get expiry
             expiry = self.dhan.get_nearest_expiry(security_id, segment)
             if not expiry:
-                logger.warning(f"⚠️ {index_name}: No expiry found")
+                logger.warning(f"{index_name}: No expiry found")
                 return
-            
-            logger.info(f"📅 Expiry: {expiry}")
             
             # Get chart data
             mtf_data = self.dhan.get_multi_timeframe_data(security_id, segment, symbol)
             if not mtf_data or '5m' not in mtf_data:
-                logger.warning(f"⚠️ {index_name}: No chart data")
+                logger.warning(f"{index_name}: No chart data")
                 return
             
             spot_price = mtf_data['5m']['close'].iloc[-1]
-            logger.info(f"💰 Spot Price: {spot_price:.2f}")
+            logger.info(f"Spot: {spot_price:.2f}")
             
             # Advanced chart analysis
             structure = self.chart_analyzer.identify_market_structure(mtf_data['15m'])
             order_blocks = self.chart_analyzer.find_order_blocks(mtf_data['15m'])
             sr_levels = self.chart_analyzer.calculate_multi_touch_sr(mtf_data['15m'])
             
-            logger.info(f"📊 Structure: {structure.get('structure')} | Bias: {structure.get('bias')}")
+            logger.info(f"Structure: {structure.get('structure')} | Bias: {structure.get('bias')}")
             
             # Get option chain
             oi_data = self.dhan.get_option_chain(security_id, segment, expiry, symbol, spot_price)
             if not oi_data or len(oi_data) < 10:
-                logger.warning(f"⚠️ {index_name}: Insufficient option data")
+                logger.warning(f"{index_name}: No option data")
                 return
             
             # OI comparison
@@ -1042,10 +1039,10 @@ class AdvancedIndexBot:
             
             aggregate = oi_comparison.get('aggregate_analysis')
             if aggregate:
-                logger.info(f"📈 OI: CE {aggregate.ce_oi_change_pct:+.2f}%, PE {aggregate.pe_oi_change_pct:+.2f}% | PCR {aggregate.pcr:.2f}")
-                logger.info(f"🎯 Max Pain: {aggregate.max_pain:.0f} (Distance: {aggregate.max_pain_distance:+.2f}%)")
+                logger.info(f"OI: CE {aggregate.ce_oi_change_pct:+.2f}%, PE {aggregate.pe_oi_change_pct:+.2f}% | PCR {aggregate.pcr:.2f}")
+                logger.info(f"Max Pain: {aggregate.max_pain:.0f} (Distance: {aggregate.max_pain_distance:+.2f}%)")
             else:
-                logger.info("ℹ️ First scan - no OI comparison available")
+                logger.info("First scan - no OI comparison")
             
             # DeepSeek advanced analysis
             analysis = self.deepseek.create_advanced_analysis(
@@ -1054,16 +1051,16 @@ class AdvancedIndexBot:
             )
             
             if not analysis:
-                logger.warning(f"⚠️ {index_name}: No analysis from DeepSeek")
+                logger.warning(f"{index_name}: No analysis from DeepSeek")
                 return
             
             # Flexible filter (not too strict!)
             if analysis.opportunity == "WAIT":
-                logger.info(f"⏸️ {index_name}: Analysis says WAIT")
+                logger.info(f"{index_name}: Analysis says WAIT")
                 return
             
             if analysis.confidence < Config.CONFIDENCE_THRESHOLD:
-                logger.info(f"⏸️ {index_name}: Confidence {analysis.confidence}% < {Config.CONFIDENCE_THRESHOLD}%")
+                logger.info(f"{index_name}: Confidence {analysis.confidence}% < {Config.CONFIDENCE_THRESHOLD}%")
                 return
             
             # Check time filter
@@ -1073,11 +1070,11 @@ class AdvancedIndexBot:
             minute = now_ist.minute
             
             if hour == 9 and minute < 15 + Config.SKIP_OPENING_MINUTES:
-                logger.info(f"⏸️ {index_name}: Market opening period - skipping")
+                logger.info(f"{index_name}: Market opening period - skip")
                 return
             
             if hour == 15 or (hour == 14 and minute >= (60 - Config.SKIP_CLOSING_MINUTES)):
-                logger.info(f"⏸️ {index_name}: Market closing period - skipping")
+                logger.info(f"{index_name}: Market closing period - skip")
                 return
             
             # Generate chart
@@ -1087,19 +1084,19 @@ class AdvancedIndexBot:
             await self.send_alert(index_name, spot_price, analysis, aggregate, expiry, chart_image)
             
             self.alerts_sent += 1
-            logger.info(f"✅ {index_name}: ALERT SENT SUCCESSFULLY!")
-            logger.info(f"📊 Stats: Total Scans={self.total_scans}, Alerts Sent={self.alerts_sent}")
+            logger.info(f"✅ {index_name}: ALERT SENT!")
+            logger.info(f"Stats: Total Scans={self.total_scans}, Alerts={self.alerts_sent}")
             
         except Exception as e:
-            logger.error(f"❌ Scan error {index_name}: {e}")
+            logger.error(f"Scan error {index_name}: {e}")
             logger.error(traceback.format_exc())
     
     async def send_alert(self, index_name: str, spot_price: float, analysis: AdvancedAnalysis,
                         aggregate: Optional[AggregateOIAnalysis], expiry: str, chart_image: Optional[BytesIO]):
         try:
             signal_map = {
-                "PE_BUY": ("🔴", "PE BUY (Bullish)"),
-                "CE_BUY": ("🟢", "CE BUY (Bearish)"),
+                "PE_BUY": ("🔴", "PE BUY"),
+                "CE_BUY": ("🟢", "CE BUY"),
                 "WAIT": ("⚪", "WAIT")
             }
             
@@ -1108,19 +1105,10 @@ class AdvancedIndexBot:
             def safe(val):
                 return self.escape_html(val)
             
-            ist_time = datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%H:%M:%S')
+            ist_time = datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%H:%M')
             
             # Compact caption for image
-            caption = f"""🔥 ADVANCED ANALYSIS - {safe(index_name)}
-
-{signal_emoji} {signal_text} | Confidence: {analysis.confidence}%
-Score: {analysis.total_score}/125 (Chart:{analysis.chart_score} Options:{analysis.option_score} Align:{analysis.alignment_score})
-
-💰 Entry: {analysis.entry_price:.0f} | SL: {analysis.stop_loss:.0f}
-🎯 T1: {analysis.target_1:.0f} | T2: {analysis.target_2:.0f}
-RR: {analysis.risk_reward} | Strike: {analysis.recommended_strike}
-
-⏰ {ist_time} IST | v9.1 Advanced"""
+            caption = f"🔥 ADVANCED ANALYSIS - {safe(index_name)}\n\n{signal_emoji} {signal_text} | Confidence: {analysis.confidence}%\nScore: {analysis.total_score}/125 (Chart:{analysis.chart_score} Options:{analysis.option_score} Align:{analysis.alignment_score})\n\n💰 Entry: {analysis.entry_price:.0f} | SL: {analysis.stop_loss:.0f}\n🎯 T1: {analysis.target_1:.0f} | T2: {analysis.target_2:.0f}\nRR: {analysis.risk_reward} | Strike: {analysis.recommended_strike}\n\n⏰ {ist_time} IST | v9.0 Advanced"
             
             if chart_image:
                 try:
@@ -1131,7 +1119,7 @@ RR: {analysis.risk_reward} | Strike: {analysis.recommended_strike}
                         parse_mode='HTML'
                     )
                 except Exception as e:
-                    logger.error(f"❌ Chart send failed: {e}")
+                    logger.error(f"Chart send failed: {e}")
                     await self.bot.send_message(
                         chat_id=Config.TELEGRAM_CHAT_ID,
                         text=caption,
@@ -1141,9 +1129,7 @@ RR: {analysis.risk_reward} | Strike: {analysis.recommended_strike}
             # Detailed message
             agg_text = ""
             if aggregate:
-                agg_text = f"""PCR: {aggregate.pcr:.2f} | Max Pain: {aggregate.max_pain:.0f} ({aggregate.max_pain_distance:+.2f}%)
-OI: CE {aggregate.ce_oi_change_pct:+.1f}% PE {aggregate.pe_oi_change_pct:+.1f}%
-Vol: CE {aggregate.ce_volume_change_pct:+.1f}% PE {aggregate.pe_volume_change_pct:+.1f}%"""
+                agg_text = f"PCR: {aggregate.pcr:.2f} | Max Pain: {aggregate.max_pain:.0f} ({aggregate.max_pain_distance:+.2f}%)\nOI: CE {aggregate.ce_oi_change_pct:+.1f}% PE {aggregate.pe_oi_change_pct:+.1f}%\nVol: CE {aggregate.ce_volume_change_pct:+.1f}% PE {aggregate.pe_volume_change_pct:+.1f}%"
             
             supports_text = ", ".join([f"{s:.0f}" for s in analysis.support_levels[:3]])
             resistances_text = ", ".join([f"{r:.0f}" for r in analysis.resistance_levels[:3]])
@@ -1207,7 +1193,7 @@ RISK FACTORS
             if analysis.divergence_warning and analysis.divergence_warning != "None":
                 detailed += f"\n\n{'='*40}\n⚠️ DIVERGENCE WARNING\n{'='*40}\n{safe(analysis.divergence_warning[:150])}"
             
-            detailed += f"\n\n🤖 DeepSeek V3 Advanced | v9.1\n📊 NIFTY 50 & SENSEX (5 min scan)\nExpiry: {expiry}"
+            detailed += f"\n\n🤖 DeepSeek V3 Advanced | v9.0\n📊 Indices Only (5 min scan)\nExpiry: {expiry}"
             
             await self.bot.send_message(
                 chat_id=Config.TELEGRAM_CHAT_ID,
@@ -1215,28 +1201,28 @@ RISK FACTORS
                 parse_mode='HTML'
             )
             
-            logger.info("✅ Alert sent successfully!")
+            logger.info("Alert sent successfully!")
             return True
             
         except Exception as e:
-            logger.error(f"❌ Alert sending error: {e}")
+            logger.error(f"Alert error: {e}")
             logger.error(traceback.format_exc())
             return False
     
     async def send_startup_message(self):
         try:
-            redis_status = "✅ Connected" if self.redis.redis_client else "❌ Disconnected"
+            redis_status = "✅" if self.redis.redis_client else "❌"
             
-            msg = f"""🔥 ADVANCED INDEX BOT v9.1 - ACTIVE 🔥
+            msg = f"""🔥 ADVANCED INDEX BOT v9.0 - ACTIVE 🔥
 
 {'='*40}
 INDICES ONLY - ADVANCED ANALYSIS
 {'='*40}
 
-📊 Symbols: NIFTY 50 + SENSEX
-⏰ Scan Interval: Every 5 minutes
-🔴 Redis Status: {redis_status}
-🤖 AI Engine: DeepSeek V3 (Advanced)
+📊 Symbols: NIFTY 50 + NIFTY BANK
+⏰ Scan: Every 5 minutes
+🔴 Redis: {redis_status}
+🤖 AI: DeepSeek V3 (Advanced)
 
 {'='*40}
 ADVANCED FEATURES
@@ -1256,36 +1242,32 @@ FLEXIBLE FILTERS
 Confidence: ≥70% (flexible)
 OI Divergence: ≥3%
 Volume: ≥30%
-PCR: >1.1 (Bullish) or <0.9 (Bearish)
+PCR: >1.1 or <0.9
 Time: Skip first 10m & last 20m
 
 {'='*40}
 EXPECTED RESULTS
 {'='*40}
 Signals/day: 4-8 (both indices)
-Quality: High probability setups
+Quality: High probability
 Win Rate Target: 80-85%
 
-Status: 🟢 RUNNING (ADVANCED MODE)
-
-Developed by: Advanced Trading Systems
-Version: 9.1 | Date: {datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%Y-%m-%d')}"""
+Status: 🟢 RUNNING (ADVANCED MODE)"""
             
             await self.bot.send_message(
                 chat_id=Config.TELEGRAM_CHAT_ID,
                 text=msg,
                 parse_mode='HTML'
             )
-            logger.info("✅ Startup message sent successfully!")
+            logger.info("Startup message sent!")
         except Exception as e:
-            logger.error(f"❌ Startup message error: {e}")
+            logger.error(f"Startup error: {e}")
     
     async def run(self):
         logger.info("="*70)
-        logger.info("🚀 ADVANCED INDEX BOT v9.1 - NIFTY 50 & SENSEX")
+        logger.info("ADVANCED INDEX BOT v9.0 - NIFTY/SENSEX")
         logger.info("="*70)
         
-        # Check credentials
         missing = []
         for cred in ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID', 'DHAN_CLIENT_ID', 
                      'DHAN_ACCESS_TOKEN', 'DEEPSEEK_API_KEY']:
@@ -1293,46 +1275,46 @@ Version: 9.1 | Date: {datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%Y-%
                 missing.append(cred)
         
         if missing:
-            logger.error(f"❌ Missing credentials: {', '.join(missing)}")
+            logger.error(f"Missing credentials: {', '.join(missing)}")
             return
         
         await self.send_startup_message()
         
         logger.info("="*70)
-        logger.info("✅ Bot RUNNING - Scanning every 5 minutes")
-        logger.info("📊 Advanced analysis for NIFTY 50 + SENSEX")
+        logger.info("Bot RUNNING - Scanning every 5 minutes")
+        logger.info("Advanced analysis for NIFTY 50 + NIFTY BANK")
         logger.info("="*70)
         
         while self.running:
             try:
                 if not self.is_market_open():
-                    logger.info("⏸️ Market closed. Sleeping for 60 seconds...")
+                    logger.info("Market closed. Sleeping...")
                     await asyncio.sleep(60)
                     continue
                 
                 ist = pytz.timezone('Asia/Kolkata')
                 logger.info(f"\n{'='*70}")
-                logger.info(f"🔄 SCAN CYCLE STARTED - {datetime.now(ist).strftime('%H:%M:%S')}")
+                logger.info(f"SCAN CYCLE - {datetime.now(ist).strftime('%H:%M:%S')}")
                 logger.info(f"{'='*70}")
                 
                 for index_name, index_info in Config.INDICES.items():
-                    logger.info(f"\n🔍 Scanning {index_name}...")
+                    logger.info(f"\nScanning {index_name}...")
                     await self.scan_index(index_name, index_info)
                     await asyncio.sleep(5)  # Small gap between indices
                 
                 logger.info(f"\n{'='*70}")
-                logger.info(f"✅ SCAN CYCLE COMPLETE!")
-                logger.info(f"📊 Stats: Total Scans={self.total_scans}, Alerts Sent={self.alerts_sent}")
+                logger.info(f"CYCLE COMPLETE!")
+                logger.info(f"Stats: Scans={self.total_scans}, Alerts={self.alerts_sent}")
                 logger.info(f"{'='*70}\n")
                 
                 await asyncio.sleep(Config.SCAN_INTERVAL)
                 
             except KeyboardInterrupt:
-                logger.info("🛑 Stopped by user (Ctrl+C)")
+                logger.info("Stopped by user")
                 self.running = False
                 break
             except Exception as e:
-                logger.error(f"❌ Main loop error: {e}")
+                logger.error(f"Loop error: {e}")
                 logger.error(traceback.format_exc())
                 await asyncio.sleep(60)
 
@@ -1342,20 +1324,20 @@ async def main():
         bot = AdvancedIndexBot()
         await bot.run()
     except Exception as e:
-        logger.error(f"❌ Fatal error: {e}")
+        logger.error(f"Fatal error: {e}")
         logger.error(traceback.format_exc())
 
 
 if __name__ == "__main__":
     logger.info("="*70)
-    logger.info("🚀 ADVANCED INDEX BOT v9.1 STARTING...")
-    logger.info("📊 NIFTY 50 + SENSEX ONLY")
+    logger.info("ADVANCED INDEX BOT v9.0 STARTING...")
+    logger.info("NIFTY 50 + NIFTY BANK ONLY")
     logger.info("="*70)
     
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("\n🛑 Shutdown complete (Ctrl+C)")
+        logger.info("\nShutdown (Ctrl+C)")
     except Exception as e:
-        logger.error(f"\n❌ Critical error: {e}")
-        logger.error(traceback.format_exc())            
+        logger.error(f"\nCritical error: {e}")
+        logger.error(traceback.format_exc())
