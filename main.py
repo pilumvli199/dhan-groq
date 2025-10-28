@@ -78,6 +78,12 @@ class Config:
             "segment": "NSE_FNO",
             "instrument": "INDEX"
         },
+       "SENSEX": {
+            "symbol": "SENSEX",
+            "security_id": 51,  # BSE SENSEX (Update if needed)
+            "segment": "BSE_FNO",
+            "instrument": "INDEX"
+        }
     }
 
 
