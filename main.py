@@ -991,6 +991,7 @@ class AdvancedIndexBot:
         return Config.MARKET_OPEN <= current_time <= Config.MARKET_CLOSE
     
     def escape_html(self, text: str) -> str:
+        """Properly escape HTML special characters"""
         return html.escape(str(text))
     
     async def scan_index(self, index_name: str, index_info: Dict):
@@ -1107,26 +1108,24 @@ class AdvancedIndexBot:
             
             ist_time = datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%H:%M')
             
-            # Compact caption for image
-            caption = f"🔥 ADVANCED ANALYSIS - {safe(index_name)}\n\n{signal_emoji} {signal_text} | Confidence: {analysis.confidence}%\nScore: {analysis.total_score}/125 (Chart:{analysis.chart_score} Options:{analysis.option_score} Align:{analysis.alignment_score})\n\n💰 Entry: {analysis.entry_price:.0f} | SL: {analysis.stop_loss:.0f}\n🎯 T1: {analysis.target_1:.0f} | T2: {analysis.target_2:.0f}\nRR: {analysis.risk_reward} | Strike: {analysis.recommended_strike}\n\n⏰ {ist_time} IST | v9.0 Advanced"
+            # Compact caption for image - NO HTML FORMATTING
+            caption = f"🔥 ADVANCED ANALYSIS - {index_name}\n\n{signal_emoji} {signal_text} | Confidence: {analysis.confidence}%\nScore: {analysis.total_score}/125 (Chart:{analysis.chart_score} Options:{analysis.option_score} Align:{analysis.alignment_score})\n\n💰 Entry: {analysis.entry_price:.0f} | SL: {analysis.stop_loss:.0f}\n🎯 T1: {analysis.target_1:.0f} | T2: {analysis.target_2:.0f}\nRR: {analysis.risk_reward} | Strike: {analysis.recommended_strike}\n\n⏰ {ist_time} IST | v9.0 Advanced"
             
             if chart_image:
                 try:
                     await self.bot.send_photo(
                         chat_id=Config.TELEGRAM_CHAT_ID,
                         photo=chart_image,
-                        caption=caption,
-                        parse_mode='HTML'
+                        caption=caption
                     )
                 except Exception as e:
                     logger.error(f"Chart send failed: {e}")
                     await self.bot.send_message(
                         chat_id=Config.TELEGRAM_CHAT_ID,
-                        text=caption,
-                        parse_mode='HTML'
+                        text=caption
                     )
             
-            # Detailed message
+            # Detailed message - WITH HTML ESCAPING
             agg_text = ""
             if aggregate:
                 agg_text = f"PCR: {aggregate.pcr:.2f} | Max Pain: {aggregate.max_pain:.0f} ({aggregate.max_pain_distance:+.2f}%)\nOI: CE {aggregate.ce_oi_change_pct:+.1f}% PE {aggregate.pe_oi_change_pct:+.1f}%\nVol: CE {aggregate.ce_volume_change_pct:+.1f}% PE {aggregate.pe_volume_change_pct:+.1f}%"
@@ -1165,7 +1164,7 @@ OPTION CHAIN
 {agg_text}
 
 {'='*40}
-PATTERNS & SIGNALS
+PATTERNS &amp; SIGNALS
 {'='*40}
 📊 {safe(analysis.pattern_signal[:150])}
 
@@ -1213,13 +1212,14 @@ RISK FACTORS
         try:
             redis_status = "✅" if self.redis.redis_client else "❌"
             
+            # Plain text message - NO HTML special characters issues
             msg = f"""🔥 ADVANCED INDEX BOT v9.0 - ACTIVE 🔥
 
 {'='*40}
 INDICES ONLY - ADVANCED ANALYSIS
 {'='*40}
 
-📊 Symbols: NIFTY 50 + NIFTY BANK
+📊 Symbols: NIFTY 50 + SENSEX
 ⏰ Scan: Every 5 minutes
 🔴 Redis: {redis_status}
 🤖 AI: DeepSeek V3 (Advanced)
@@ -1242,8 +1242,8 @@ FLEXIBLE FILTERS
 Confidence: ≥70% (flexible)
 OI Divergence: ≥3%
 Volume: ≥30%
-PCR: >1.1 or <0.9
-Time: Skip first 10m & last 20m
+PCR: Greater than 1.1 or Less than 0.9
+Time: Skip first 10m and last 20m
 
 {'='*40}
 EXPECTED RESULTS
@@ -1256,12 +1256,12 @@ Status: 🟢 RUNNING (ADVANCED MODE)"""
             
             await self.bot.send_message(
                 chat_id=Config.TELEGRAM_CHAT_ID,
-                text=msg,
-                parse_mode='HTML'
+                text=msg
             )
             logger.info("Startup message sent!")
         except Exception as e:
             logger.error(f"Startup error: {e}")
+            logger.error(traceback.format_exc())
     
     async def run(self):
         logger.info("="*70)
@@ -1282,7 +1282,7 @@ Status: 🟢 RUNNING (ADVANCED MODE)"""
         
         logger.info("="*70)
         logger.info("Bot RUNNING - Scanning every 5 minutes")
-        logger.info("Advanced analysis for NIFTY 50 + NIFTY BANK")
+        logger.info("Advanced analysis for NIFTY 50 + SENSEX")
         logger.info("="*70)
         
         while self.running:
@@ -1331,7 +1331,7 @@ async def main():
 if __name__ == "__main__":
     logger.info("="*70)
     logger.info("ADVANCED INDEX BOT v9.0 STARTING...")
-    logger.info("NIFTY 50 + NIFTY BANK ONLY")
+    logger.info("NIFTY 50 + SENSEX ONLY")
     logger.info("="*70)
     
     try:
