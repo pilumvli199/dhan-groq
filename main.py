@@ -454,10 +454,10 @@ class DhanAPI:
         logger.info(f"DhanAPI initialized - NIFTY 50 ONLY")
     
     def get_nearest_expiry(self) -> Optional[str]:
-        """Get nearest expiry for NIFTY options"""
+        """Get nearest WEEKLY expiry for NIFTY options"""
         try:
             payload = {
-                "UnderlyingScrip": Config.FNO_SECURITY_ID,  # INTEGER 13
+                "UnderlyingScrip": Config.FNO_SECURITY_ID,  # 25
                 "UnderlyingSeg": Config.FNO_SEGMENT
             }
             
@@ -476,9 +476,12 @@ class DhanAPI:
                 data = response.json()
                 logger.info(f"Expiry data: {data}")
                 if data.get('status') == 'success' and data.get('data'):
-                    expiry = data['data'][0]
-                    logger.info(f"NIFTY 50 expiry: {expiry}")
-                    return expiry
+                    expiries = data['data']
+                    # Get NEAREST expiry (weekly if available)
+                    nearest_expiry = expiries[0]  # First one is nearest
+                    logger.info(f"NIFTY 50 expiry: {nearest_expiry}")
+                    logger.info(f"All expiries: {expiries}")
+                    return nearest_expiry
             
             logger.error(f"Expiry fetch failed: {response.text}")
             return None
@@ -599,7 +602,7 @@ class DhanAPI:
         """Fetch option chain data for NIFTY 50"""
         try:
             payload = {
-                "UnderlyingScrip": Config.FNO_SECURITY_ID,  # INTEGER 13
+                "UnderlyingScrip": Config.FNO_SECURITY_ID,  # 25
                 "UnderlyingSeg": Config.FNO_SEGMENT,
                 "Expiry": expiry
             }
@@ -630,10 +633,22 @@ class DhanAPI:
                 logger.error("No strikes")
                 return None
             
+            # Log first few strikes to debug
             strikes = [float(s) for s in oc_data.keys()]
+            logger.info(f"Total strikes in chain: {len(strikes)}")
+            logger.info(f"Sample strikes: {sorted(strikes)[:10]}")
+            logger.info(f"Spot price: {spot_price:.2f}")
+            
             atm_strike = min(strikes, key=lambda x: abs(x - spot_price))
             
             logger.info(f"ATM: {atm_strike} (Spot: {spot_price:.2f})")
+            logger.info(f"ATM distance: {abs(atm_strike - spot_price):.2f}")
+            
+            # If ATM is far from spot, log warning
+            if abs(atm_strike - spot_price) > 2000:
+                logger.error(f"⚠️ ATM {atm_strike} is too far from spot {spot_price:.2f}")
+                logger.error(f"This suggests WRONG option chain! Check security ID")
+                logger.error(f"Strike range: {min(strikes):.0f} to {max(strikes):.0f}")
             
             oi_list = []
             
