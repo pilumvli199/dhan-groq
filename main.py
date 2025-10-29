@@ -475,10 +475,12 @@ class DhanAPI:
     def __init__(self, redis_cache: RedisCache):
         self.headers = {
             'access-token': Config.DHAN_ACCESS_TOKEN,
+            'client-id': Config.DHAN_CLIENT_ID,
             'Content-Type': 'application/json'
         }
         self.redis = redis_cache
-        logger.info("DhanAPI initialized for INDICES (Fixed)")
+        logger.info(f"DhanAPI initialized - ClientID: {Config.DHAN_CLIENT_ID[:10]}...")
+        logger.info(f"Access Token present: {bool(Config.DHAN_ACCESS_TOKEN)}")
     
     def get_nearest_expiry(self, index_name: str) -> Optional[str]:
         """Get nearest expiry for index options"""
@@ -1343,15 +1345,25 @@ Status: 🟢 RUNNING (FIXED MODE)"""
         logger.info("ADVANCED INDEX BOT v9.1 - NIFTY/SENSEX (FIXED)")
         logger.info("="*70)
         
+        # Validate credentials
         missing = []
         for cred in ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID', 'DHAN_CLIENT_ID', 
                      'DHAN_ACCESS_TOKEN', 'DEEPSEEK_API_KEY']:
-            if not getattr(Config, cred):
+            val = getattr(Config, cred)
+            if not val:
                 missing.append(cred)
+            else:
+                # Show first/last chars for verification
+                if 'TOKEN' in cred or 'KEY' in cred:
+                    logger.info(f"{cred}: {val[:10]}...{val[-10:]}")
+                else:
+                    logger.info(f"{cred}: {val}")
         
         if missing:
-            logger.error(f"Missing credentials: {', '.join(missing)}")
+            logger.error(f"❌ MISSING CREDENTIALS: {', '.join(missing)}")
             return
+        
+        logger.info("✅ All credentials present")
         
         await self.send_startup_message()
         
