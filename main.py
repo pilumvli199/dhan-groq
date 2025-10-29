@@ -493,7 +493,7 @@ class DhanAPI:
             fno_security_id = 25 if index_name == "NIFTY 50" else 51
             
             payload = {
-                "UnderlyingScrip": str(fno_security_id),
+                "UnderlyingScrip": int(fno_security_id),  # Must be int, not string!
                 "UnderlyingSeg": fno_segment
             }
             
@@ -646,7 +646,7 @@ class DhanAPI:
             fno_security_id = 25 if index_name == "NIFTY 50" else 51
             
             payload = {
-                "UnderlyingScrip": str(fno_security_id),
+                "UnderlyingScrip": int(fno_security_id),  # Must be int!
                 "UnderlyingSeg": fno_segment,
                 "Expiry": expiry
             }
