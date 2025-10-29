@@ -439,31 +439,46 @@ class DhanAPI:
             oc_data = data['data'].get('oc', {})
             
             if not oc_data:
-                logger.error("❌ No strikes")
+                logger.error("❌ No strikes in 'oc' field")
                 return None
             
-            # Convert strikes to float and filter valid ones
-            strikes = []
+            # ✅ DEBUG: Show first 3 strikes to understand format
+            sample_strikes = list(oc_data.keys())[:3]
+            logger.info(f"🔍 DEBUG: Sample strikes from API: {sample_strikes}")
+            logger.info(f"🔍 DEBUG: Total strikes in response: {len(oc_data)}")
+            
+            # ✅ Convert strikes from "25000.000000" format
+            all_strikes = []
             for strike_str in oc_data.keys():
                 try:
                     strike = float(strike_str)
-                    # ✅ FILTER: Only keep strikes near spot price
-                    # NIFTY 50 strikes are in 50 point intervals
-                    # Keep strikes within ±2000 points of spot
-                    if abs(strike - spot_price) <= 2000:
-                        strikes.append(strike)
+                    all_strikes.append(strike)
                 except:
                     continue
             
-            strikes = sorted(strikes)
+            all_strikes = sorted(all_strikes)
             
-            if not strikes:
-                logger.error("❌ No valid strikes found near spot price")
+            if not all_strikes:
+                logger.error("❌ No strikes found in option chain")
                 return None
             
-            logger.info(f"📊 Total valid strikes: {len(strikes)}")
-            logger.info(f"📊 Strike range: {min(strikes):.0f} to {max(strikes):.0f}")
-            logger.info(f"💰 Spot: {spot_price:.2f}")
+            logger.info(f"📊 Total strikes available: {len(all_strikes)}")
+            logger.info(f"📊 Full strike range: {min(all_strikes):.0f} to {max(all_strikes):.0f}")
+            logger.info(f"💰 Spot Price: {spot_price:.2f}")
+            
+            # ✅ SMART FILTER: Only keep strikes near spot (±2000 points)
+            strikes = [s for s in all_strikes if abs(s - spot_price) <= 2000]
+            
+            if not strikes:
+                # If no strikes within ±2000, take nearest 21 strikes
+                logger.warning(f"⚠️ No strikes within ±2000 of spot, using nearest 21")
+                atm_idx = min(range(len(all_strikes)), key=lambda i: abs(all_strikes[i] - spot_price))
+                start = max(0, atm_idx - 10)
+                end = min(len(all_strikes), atm_idx + 11)
+                strikes = all_strikes[start:end]
+            
+            logger.info(f"✅ Filtered to {len(strikes)} strikes near spot")
+            logger.info(f"📊 Filtered range: {min(strikes):.0f} to {max(strikes):.0f}")
             
             # ✅ Find ATM (nearest strike to spot)
             atm_strike = min(strikes, key=lambda x: abs(x - spot_price))
@@ -483,16 +498,13 @@ class DhanAPI:
             
             for strike in selected_strikes:
                 try:
-                    # Find strike in original data (as string with decimals)
+                    # ✅ CRITICAL: Match exact format from API
+                    # API returns strikes as "25000.000000" (6 decimals)
                     strike_str = f"{strike:.6f}"
                     strike_data = oc_data.get(strike_str)
                     
                     if not strike_data:
-                        # Try without decimals
-                        strike_str = f"{int(strike)}.000000"
-                        strike_data = oc_data.get(strike_str)
-                    
-                    if not strike_data:
+                        logger.warning(f"⚠️ No data for strike {strike:.0f}")
                         continue
                     
                     ce_data = strike_data.get('ce', {})
@@ -500,6 +512,10 @@ class DhanAPI:
                     
                     ce_oi = ce_data.get('oi', 0)
                     pe_oi = pe_data.get('oi', 0)
+                    
+                    # Log only if has data
+                    if ce_oi > 0 or pe_oi > 0:
+                        logger.info(f"  {strike:.0f}: CE OI={ce_oi:,}, PE OI={pe_oi:,}")
                     
                     oi_list.append(OIData(
                         strike=strike,
@@ -512,7 +528,7 @@ class DhanAPI:
                         pcr_at_strike=pe_oi / ce_oi if ce_oi > 0 else 0
                     ))
                 except Exception as e:
-                    logger.error(f"❌ Strike {strike} parse error: {e}")
+                    logger.error(f"❌ Strike {strike:.0f} parse error: {e}")
                     continue
             
             logger.info(f"✅ Fetched {len(oi_list)} strikes with OI data")
