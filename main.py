@@ -42,20 +42,42 @@ def find_nifty_security_ids():
             trading_symbol = row.get('SEM_TRADING_SYMBOL', '').upper()
             segment = row.get('SEM_SEGMENT', '')
             exch = row.get('SEM_EXM_EXCH_ID', '')
+            instrument = row.get('SEM_INSTRUMENT_NAME', '').upper()
             
-            # Look for NIFTY (not BANK NIFTY)
-            if 'NIFTY' in symbol or 'NIFTY' in trading_symbol:
-                if 'BANK' not in symbol and 'BANK' not in trading_symbol:
-                    if 'NIFTY 50' in symbol or trading_symbol == 'NIFTY':
+            # Look for NIFTY derivatives (OPTIONS/FUTURES)
+            # Trading symbol should be exactly "NIFTY" for NIFTY 50
+            if segment == 'D' and exch == 'NSE':  # Derivatives segment
+                if trading_symbol.startswith('NIFTY') and not trading_symbol.startswith('NIFTYBANK'):
+                    # Check if it's NIFTY 50 (not NIFTY BANK, NIFTY IT, etc.)
+                    if trading_symbol == 'NIFTY' or 'NIFTY ' in trading_symbol:
                         nifty_entries.append({
                             'security_id': row.get('SEM_SMST_SECURITY_ID', ''),
                             'symbol': symbol,
                             'trading_symbol': trading_symbol,
                             'segment': segment,
                             'exchange': exch,
-                            'instrument': row.get('SEM_INSTRUMENT_NAME', ''),
+                            'instrument': instrument,
                             'expiry_date': row.get('SEM_EXPIRY_DATE', ''),
-                            'lot_size': row.get('SEM_LOT_UNITS', '')
+                            'lot_size': row.get('SEM_LOT_UNITS', ''),
+                            'strike': row.get('SEM_STRIKE_PRICE', ''),
+                            'option_type': row.get('SEM_OPTION_TYPE', '')
+                        })
+            
+            # Also get Index (Spot)
+            elif segment == 'I' and exch == 'NSE':
+                if 'NIFTY 50' in symbol or trading_symbol == 'NIFTY':
+                    if 'BANK' not in symbol:
+                        nifty_entries.append({
+                            'security_id': row.get('SEM_SMST_SECURITY_ID', ''),
+                            'symbol': symbol,
+                            'trading_symbol': trading_symbol,
+                            'segment': segment,
+                            'exchange': exch,
+                            'instrument': instrument,
+                            'expiry_date': '',
+                            'lot_size': '',
+                            'strike': '',
+                            'option_type': ''
                         })
         
         print(f"✅ Found {len(nifty_entries)} NIFTY 50 entries\n")
@@ -90,29 +112,36 @@ def find_nifty_security_ids():
         print("="*70)
         
         if fno_entries:
-            # Group by expiry
-            expiry_groups = {}
-            for entry in fno_entries:
-                expiry = entry['expiry_date']
-                if expiry not in expiry_groups:
-                    expiry_groups[expiry] = []
-                expiry_groups[expiry].append(entry)
-            
-            # Show unique security IDs
-            unique_ids = set()
-            for entry in fno_entries[:10]:  # First 10
-                unique_ids.add(entry['security_id'])
+            # Show first few entries with details
+            print("\nSample F&O entries:")
+            for entry in fno_entries[:5]:  # First 5
                 print(f"Security ID: {entry['security_id']}")
-                print(f"Symbol: {entry['symbol']}")
                 print(f"Trading Symbol: {entry['trading_symbol']}")
+                print(f"Instrument: {entry['instrument']}")
                 print(f"Expiry: {entry['expiry_date']}")
+                print(f"Strike: {entry['strike']}")
+                print(f"Type: {entry['option_type']}")
                 print(f"Lot Size: {entry['lot_size']}")
                 print("-"*70)
             
-            print(f"\n📌 Unique Security IDs in F&O: {unique_ids}")
+            # Find underlying security ID (should be same for all)
+            from collections import Counter
+            fno_ids = [e['security_id'] for e in fno_entries]
+            id_counts = Counter(fno_ids)
+            
+            print(f"\n📊 F&O Security ID distribution:")
+            for sec_id, count in id_counts.most_common(5):
+                print(f"  Security ID {sec_id}: {count} contracts")
+            
+            most_common_id = id_counts.most_common(1)[0][0]
+            print(f"\n✅ Most common F&O Security ID: {most_common_id}")
             
         else:
             print("❌ No F&O entries found!")
+            print("\n⚠️ This means:")
+            print("  1. CSV might not have NIFTY 50 options")
+            print("  2. Or search criteria needs adjustment")
+            print("\n💡 Try searching in CSV manually for 'NIFTY' in derivatives segment")
         
         # Summary
         print("\n" + "="*70)
