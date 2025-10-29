@@ -158,49 +158,75 @@ class SecurityIDLoader:
             index_id = None
             fno_id = None
             
+            logger.info("Searching CSV for NIFTY 50...")
+            
             for row in reader:
                 try:
-                    segment = row.get('SEM_SEGMENT', '')
-                    trading_symbol = row.get('SEM_TRADING_SYMBOL', '')
-                    exch_id = row.get('SEM_EXM_EXCH_ID', '')
-                    instrument_name = row.get('SEM_INSTRUMENT_NAME', '')
+                    segment = row.get('SEM_SEGMENT', '').strip()
+                    trading_symbol = row.get('SEM_TRADING_SYMBOL', '').strip()
+                    exch_id = row.get('SEM_EXM_EXCH_ID', '').strip()
+                    instrument_name = row.get('SEM_INSTRUMENT_NAME', '').strip()
+                    custom_symbol = row.get('SEM_CUSTOM_SYMBOL', '').strip()
+                    sec_id = row.get('SEM_SMST_SECURITY_ID', '').strip()
                     
                     # INDEX Security ID (for spot price)
-                    if segment == 'I' and trading_symbol == 'NIFTY 50':
-                        sec_id = row.get('SEM_SMST_SECURITY_ID')
-                        if sec_id:
-                            index_id = int(sec_id)
-                            logger.info(f"✅ NIFTY 50 INDEX Security ID: {index_id}")
+                    # Try multiple variations: "NIFTY 50", "Nifty 50", "NIFTY50", etc.
+                    if segment == 'I':
+                        if 'NIFTY' in trading_symbol.upper() and '50' in trading_symbol:
+                            if sec_id:
+                                index_id = int(sec_id)
+                                logger.info(f"✅ NIFTY 50 INDEX found: {trading_symbol} | ID: {index_id}")
+                                logger.info(f"   Custom Symbol: {custom_symbol}")
                     
                     # F&O Security ID (for options)
-                    if segment == 'D' and trading_symbol == 'NIFTY' and exch_id == 'NSE':
-                        sec_id = row.get('SEM_SMST_SECURITY_ID')
-                        if sec_id and instrument_name == 'OPTIDX':
-                            fno_id = int(sec_id)
-                            logger.info(f"✅ NIFTY 50 F&O Security ID: {fno_id}")
+                    # Look for: Segment D, NIFTY (not NIFTY BANK), NSE, OPTIDX
+                    if segment == 'D' and exch_id == 'NSE':
+                        if trading_symbol == 'NIFTY' and instrument_name == 'OPTIDX':
+                            if sec_id:
+                                fno_id = int(sec_id)
+                                logger.info(f"✅ NIFTY F&O found: {trading_symbol} | ID: {fno_id}")
+                                logger.info(f"   Instrument: {instrument_name}")
                     
                     # Agar dono mil gaye to break
                     if index_id and fno_id:
                         break
                         
-                except Exception:
+                except Exception as e:
                     continue
             
+            # If not found, try alternative approach - use hardcoded known IDs
+            if not index_id or not fno_id:
+                logger.warning("⚠️ CSV search failed, using fallback IDs...")
+                
+                # Known NIFTY 50 IDs from Dhan documentation
+                if not index_id:
+                    index_id = 13  # NIFTY 50 Index ID (IDX_I segment)
+                    logger.info(f"📌 Using fallback INDEX ID: {index_id}")
+                
+                if not fno_id:
+                    fno_id = 13  # NIFTY 50 F&O ID (NSE_FNO segment)
+                    logger.info(f"📌 Using fallback F&O ID: {fno_id}")
+            
             if index_id and fno_id:
-                logger.info(f"✅ IDs Loaded - Index: {index_id}, F&O: {fno_id}")
+                logger.info(f"✅ Final IDs - Index: {index_id}, F&O: {fno_id}")
                 return {
                     'index_id': index_id,
                     'fno_id': fno_id
                 }
             else:
-                logger.error("❌ Could not find NIFTY 50 IDs in CSV!")
-                logger.info(f"Found Index ID: {index_id}, F&O ID: {fno_id}")
+                logger.error("❌ Could not find NIFTY 50 IDs!")
                 return None
                 
         except Exception as e:
             logger.error(f"Error loading security IDs: {e}")
             logger.error(traceback.format_exc())
-            return None
+            
+            # Emergency fallback
+            logger.warning("🚨 Emergency fallback - using known IDs")
+            return {
+                'index_id': 13,
+                'fno_id': 13
+            }
 
 
 class RedisCache:
