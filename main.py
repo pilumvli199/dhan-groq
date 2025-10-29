@@ -1,185 +1,192 @@
 """
-🔍 NIFTY 50 Security ID Finder
-Downloads Dhan's instrument CSV and finds correct Security IDs
+🧪 NIFTY 50 API TESTER
+Tests different Security IDs to find correct one for NIFTY 50 options
 """
 
 import requests
-import csv
-import io
+import json
+import os
+from datetime import datetime
 
-def find_nifty_security_ids():
-    """
-    Download Dhan instrument CSV and find NIFTY 50 Security IDs
-    """
+# Your credentials
+DHAN_CLIENT_ID = os.getenv("DHAN_CLIENT_ID", "1108547103")
+DHAN_ACCESS_TOKEN = os.getenv("DHAN_ACCESS_TOKEN", "your_token_here")
+
+DHAN_API_BASE = "https://api.dhan.co"
+DHAN_EXPIRY_LIST_URL = f"{DHAN_API_BASE}/v2/optionchain/expirylist"
+DHAN_OPTION_CHAIN_URL = f"{DHAN_API_BASE}/v2/optionchain"
+
+headers = {
+    'access-token': DHAN_ACCESS_TOKEN,
+    'client-id': DHAN_CLIENT_ID,
+    'Content-Type': 'application/json'
+}
+
+print("="*80)
+print("🧪 NIFTY 50 API TESTER - FINDING CORRECT SECURITY ID")
+print("="*80)
+
+# Test different possible Security IDs for NIFTY 50
+# Based on common patterns in Dhan API
+test_ids = [
+    13,    # Index spot
+    25,    # Common F&O ID
+    26,    # Another common ID
+    1333,  # Pattern based
+    2513,  # Pattern based
+]
+
+print(f"\n📋 Testing {len(test_ids)} possible Security IDs for NIFTY 50 F&O...")
+print("-"*80)
+
+successful_ids = []
+
+for test_id in test_ids:
+    print(f"\n🔍 Testing Security ID: {test_id}")
+    print("   Segment: NSE_FNO")
     
-    print("="*70)
-    print("🔍 FINDING NIFTY 50 SECURITY IDs FROM DHAN CSV")
-    print("="*70)
-    
-    # Download CSV
-    csv_url = "https://images.dhan.co/api-data/api-scrip-master.csv"
-    
-    print(f"\n📥 Downloading: {csv_url}")
+    payload = {
+        "UnderlyingScrip": test_id,
+        "UnderlyingSeg": "NSE_FNO"
+    }
     
     try:
-        response = requests.get(csv_url, timeout=30)
-        response.raise_for_status()
+        # Test 1: Get expiry list
+        response = requests.post(
+            DHAN_EXPIRY_LIST_URL,
+            json=payload,
+            headers=headers,
+            timeout=10
+        )
         
-        print(f"✅ Downloaded successfully ({len(response.content)} bytes)")
-        
-        # Parse CSV
-        csv_content = response.content.decode('utf-8')
-        csv_reader = csv.DictReader(io.StringIO(csv_content))
-        
-        print("\n🔍 Searching for NIFTY 50 entries...")
-        print("-"*70)
-        
-        nifty_entries = []
-        
-        for row in csv_reader:
-            # Check if this is NIFTY 50 or NIFTY related
-            symbol = row.get('SEM_CUSTOM_SYMBOL', '').upper()
-            trading_symbol = row.get('SEM_TRADING_SYMBOL', '').upper()
-            segment = row.get('SEM_SEGMENT', '')
-            exch = row.get('SEM_EXM_EXCH_ID', '')
-            instrument = row.get('SEM_INSTRUMENT_NAME', '').upper()
+        if response.status_code == 200:
+            data = response.json()
             
-            # Look for NIFTY derivatives (OPTIONS/FUTURES)
-            # Trading symbol should be exactly "NIFTY" for NIFTY 50
-            if segment == 'D' and exch == 'NSE':  # Derivatives segment
-                if trading_symbol.startswith('NIFTY') and not trading_symbol.startswith('NIFTYBANK'):
-                    # Check if it's NIFTY 50 (not NIFTY BANK, NIFTY IT, etc.)
-                    if trading_symbol == 'NIFTY' or 'NIFTY ' in trading_symbol:
-                        nifty_entries.append({
-                            'security_id': row.get('SEM_SMST_SECURITY_ID', ''),
-                            'symbol': symbol,
-                            'trading_symbol': trading_symbol,
-                            'segment': segment,
-                            'exchange': exch,
-                            'instrument': instrument,
-                            'expiry_date': row.get('SEM_EXPIRY_DATE', ''),
-                            'lot_size': row.get('SEM_LOT_UNITS', ''),
-                            'strike': row.get('SEM_STRIKE_PRICE', ''),
-                            'option_type': row.get('SEM_OPTION_TYPE', '')
-                        })
-            
-            # Also get Index (Spot)
-            elif segment == 'I' and exch == 'NSE':
-                if 'NIFTY 50' in symbol or trading_symbol == 'NIFTY':
-                    if 'BANK' not in symbol:
-                        nifty_entries.append({
-                            'security_id': row.get('SEM_SMST_SECURITY_ID', ''),
-                            'symbol': symbol,
-                            'trading_symbol': trading_symbol,
-                            'segment': segment,
-                            'exchange': exch,
-                            'instrument': instrument,
-                            'expiry_date': '',
-                            'lot_size': '',
-                            'strike': '',
-                            'option_type': ''
-                        })
-        
-        print(f"✅ Found {len(nifty_entries)} NIFTY 50 entries\n")
-        
-        # Group by segment
-        spot_entries = []
-        fno_entries = []
-        
-        for entry in nifty_entries:
-            if entry['segment'] == 'I':  # Index segment (Spot)
-                spot_entries.append(entry)
-            elif entry['segment'] == 'D':  # Derivatives (F&O)
-                fno_entries.append(entry)
-        
-        # Display Spot entries
-        print("📊 NIFTY 50 SPOT (Index) - Segment: IDX_I")
-        print("="*70)
-        
-        if spot_entries:
-            for entry in spot_entries[:5]:  # Show first 5
-                print(f"Security ID: {entry['security_id']}")
-                print(f"Symbol: {entry['symbol']}")
-                print(f"Trading Symbol: {entry['trading_symbol']}")
-                print(f"Exchange: {entry['exchange']}")
-                print(f"Instrument: {entry['instrument']}")
-                print("-"*70)
+            if data.get('status') == 'success' and data.get('data'):
+                expiries = data['data']
+                print(f"   ✅ Expiry API Success!")
+                print(f"   📅 Found {len(expiries)} expiries: {expiries[:3]}")
+                
+                # Test 2: Get option chain for first expiry
+                if expiries:
+                    test_expiry = expiries[0]
+                    print(f"\n   🔍 Testing option chain for expiry: {test_expiry}")
+                    
+                    oc_payload = {
+                        "UnderlyingScrip": test_id,
+                        "UnderlyingSeg": "NSE_FNO",
+                        "Expiry": test_expiry
+                    }
+                    
+                    oc_response = requests.post(
+                        DHAN_OPTION_CHAIN_URL,
+                        json=oc_payload,
+                        headers=headers,
+                        timeout=10
+                    )
+                    
+                    if oc_response.status_code == 200:
+                        oc_data = oc_response.json()
+                        
+                        if oc_data.get('data') and oc_data['data'].get('oc'):
+                            strikes = list(oc_data['data']['oc'].keys())
+                            
+                            if strikes:
+                                # Convert to float and find range
+                                strike_floats = []
+                                for s in strikes[:10]:  # Sample first 10
+                                    try:
+                                        strike_floats.append(float(s))
+                                    except:
+                                        pass
+                                
+                                if strike_floats:
+                                    min_strike = min(strike_floats)
+                                    max_strike = max(strike_floats)
+                                    
+                                    print(f"   ✅ Option Chain Success!")
+                                    print(f"   📊 Total strikes: {len(strikes)}")
+                                    print(f"   📊 Strike range (sample): {min_strike:.0f} to {max_strike:.0f}")
+                                    
+                                    # Check if strikes are in NIFTY 50 range (20000-30000)
+                                    if 20000 <= min_strike <= 30000:
+                                        print(f"   🎯 STRIKE RANGE MATCHES NIFTY 50!")
+                                        
+                                        # Get more details
+                                        sample_strike = strikes[0]
+                                        strike_data = oc_data['data']['oc'][sample_strike]
+                                        
+                                        ce_data = strike_data.get('ce', {})
+                                        pe_data = strike_data.get('pe', {})
+                                        
+                                        print(f"\n   📈 Sample Strike: {float(sample_strike):.0f}")
+                                        print(f"      CE OI: {ce_data.get('oi', 0):,}")
+                                        print(f"      PE OI: {pe_data.get('oi', 0):,}")
+                                        print(f"      CE LTP: ₹{ce_data.get('ltp', 0):.2f}")
+                                        print(f"      PE LTP: ₹{pe_data.get('ltp', 0):.2f}")
+                                        
+                                        successful_ids.append({
+                                            'security_id': test_id,
+                                            'expiries': expiries,
+                                            'total_strikes': len(strikes),
+                                            'strike_range': f"{min_strike:.0f}-{max_strike:.0f}"
+                                        })
+                                        
+                                        print(f"\n   ✅✅✅ THIS IS THE CORRECT SECURITY ID! ✅✅✅")
+                                    
+                                    elif 40000 <= min_strike <= 60000:
+                                        print(f"   ⚠️ Strike range matches BANK NIFTY (not NIFTY 50)")
+                                    elif min_strike < 10000:
+                                        print(f"   ⚠️ Strike range too low - might be different index")
+                                    else:
+                                        print(f"   ⚠️ Strike range doesn't match NIFTY 50")
+                        else:
+                            print(f"   ❌ Option chain has no strikes")
+                    else:
+                        print(f"   ❌ Option chain API failed: {oc_response.status_code}")
+            else:
+                print(f"   ❌ No expiries found")
         else:
-            print("❌ No SPOT entries found!")
-        
-        # Display F&O entries
-        print("\n🎯 NIFTY 50 F&O (Options) - Segment: NSE_FNO")
-        print("="*70)
-        
-        if fno_entries:
-            # Show first few entries with details
-            print("\nSample F&O entries:")
-            for entry in fno_entries[:5]:  # First 5
-                print(f"Security ID: {entry['security_id']}")
-                print(f"Trading Symbol: {entry['trading_symbol']}")
-                print(f"Instrument: {entry['instrument']}")
-                print(f"Expiry: {entry['expiry_date']}")
-                print(f"Strike: {entry['strike']}")
-                print(f"Type: {entry['option_type']}")
-                print(f"Lot Size: {entry['lot_size']}")
-                print("-"*70)
-            
-            # Find underlying security ID (should be same for all)
-            from collections import Counter
-            fno_ids = [e['security_id'] for e in fno_entries]
-            id_counts = Counter(fno_ids)
-            
-            print(f"\n📊 F&O Security ID distribution:")
-            for sec_id, count in id_counts.most_common(5):
-                print(f"  Security ID {sec_id}: {count} contracts")
-            
-            most_common_id = id_counts.most_common(1)[0][0]
-            print(f"\n✅ Most common F&O Security ID: {most_common_id}")
-            
-        else:
-            print("❌ No F&O entries found!")
-            print("\n⚠️ This means:")
-            print("  1. CSV might not have NIFTY 50 options")
-            print("  2. Or search criteria needs adjustment")
-            print("\n💡 Try searching in CSV manually for 'NIFTY' in derivatives segment")
-        
-        # Summary
-        print("\n" + "="*70)
-        print("📋 SUMMARY")
-        print("="*70)
-        
-        if spot_entries:
-            spot_id = spot_entries[0]['security_id']
-            print(f"✅ NIFTY 50 SPOT Security ID: {spot_id}")
-            print(f"   Segment: IDX_I")
-        
-        if fno_entries:
-            # Get most common security ID in F&O
-            from collections import Counter
-            fno_ids = [e['security_id'] for e in fno_entries]
-            most_common = Counter(fno_ids).most_common(1)[0][0]
-            print(f"✅ NIFTY 50 F&O Security ID: {most_common}")
-            print(f"   Segment: NSE_FNO")
-        
-        print("\n" + "="*70)
-        print("💡 USE THESE IDs IN YOUR BOT:")
-        print("="*70)
-        if spot_entries and fno_entries:
-            print(f"INDEX_SECURITY_ID = {spot_entries[0]['security_id']}  # For spot price")
-            print(f"FNO_SECURITY_ID = {Counter([e['security_id'] for e in fno_entries]).most_common(1)[0][0]}  # For options")
-        print("="*70)
-        
-        return {
-            'spot': spot_entries,
-            'fno': fno_entries
-        }
-        
+            print(f"   ❌ API failed: {response.status_code}")
+            if response.status_code == 401:
+                print(f"   ⚠️ Authentication error - check your access token")
+    
     except Exception as e:
-        print(f"\n❌ Error: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
+        print(f"   ❌ Error: {e}")
+    
+    print("-"*80)
 
+# Summary
+print("\n" + "="*80)
+print("📋 TEST SUMMARY")
+print("="*80)
 
-if __name__ == "__main__":
-    result = find_nifty_security_ids()
+if successful_ids:
+    print(f"✅ Found {len(successful_ids)} working Security ID(s):\n")
+    
+    for result in successful_ids:
+        print(f"🎯 Security ID: {result['security_id']}")
+        print(f"   Expiries: {len(result['expiries'])} available")
+        print(f"   First expiry: {result['expiries'][0]}")
+        print(f"   Strikes: {result['total_strikes']} total")
+        print(f"   Strike range: {result['strike_range']}")
+        print()
+    
+    print("="*80)
+    print("💡 USE THIS IN YOUR BOT:")
+    print("="*80)
+    print(f"INDEX_SECURITY_ID = 13  # For spot price")
+    print(f"FNO_SECURITY_ID = {successful_ids[0]['security_id']}  # For options")
+    print(f"FNO_SEGMENT = 'NSE_FNO'")
+    print("="*80)
+else:
+    print("❌ No working Security ID found!")
+    print("\n💡 Possible solutions:")
+    print("   1. Download instrument CSV and search manually")
+    print("   2. Check Dhan API documentation")
+    print("   3. Contact Dhan support")
+    print("\n📥 CSV URL: https://images.dhan.co/api-data/api-scrip-master.csv")
+
+print("\n" + "="*80)
+print("🏁 TEST COMPLETE")
+print("="*80)
