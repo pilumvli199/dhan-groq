@@ -75,7 +75,7 @@ class Config:
     INDEX_NAME = "NIFTY 50"
     INDEX_SECURITY_ID = "13"  # For index price data
     INDEX_SEGMENT = "IDX_I"
-    FNO_SECURITY_ID = 25  # For option chain (NIFTY UnderlyingScrip = 25)
+    FNO_SECURITY_ID = 13  # Try 13 instead of 25 for NIFTY options
     FNO_SEGMENT = "NSE_FNO"
 
 
