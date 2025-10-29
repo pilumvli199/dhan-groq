@@ -1,6 +1,6 @@
 """
-🤖 ADVANCED NIFTY/SENSEX INDEX TRADING BOT v9.0
-Version: 9.0 - INDICES ONLY (NIFTY 50 + SENSEX)
+🤖 ADVANCED NIFTY/SENSEX INDEX TRADING BOT v9.1
+Version: 9.1 - INDICES ONLY (FIXED DATA FETCHING)
 Advanced Price Action + Option Chain Analysis
 Scan Interval: 5 minutes | Flexible Rules
 """
@@ -47,6 +47,7 @@ class Config:
     
     DHAN_API_BASE = "https://api.dhan.co"
     DHAN_INTRADAY_URL = f"{DHAN_API_BASE}/v2/charts/intraday"
+    DHAN_HISTORICAL_URL = f"{DHAN_API_BASE}/v2/charts/historical"
     DHAN_OPTION_CHAIN_URL = f"{DHAN_API_BASE}/v2/optionchain"
     DHAN_EXPIRY_LIST_URL = f"{DHAN_API_BASE}/v2/optionchain/expirylist"
     DHAN_INSTRUMENTS_URL = "https://images.dhan.co/api-data/api-scrip-master.csv"
@@ -70,20 +71,28 @@ class Config:
     ATM_STRIKE_RANGE = 15  # Wider range for indices
     MIN_CANDLES_REQUIRED = 50
     
-    # INDICES ONLY
+    # INDICES ONLY - FIXED SECURITY IDs
     INDICES = {
         "NIFTY 50": {
             "symbol": "NIFTY 50",
-            "security_id": 25,  # NSE NIFTY 50
-            "segment": "NSE_FNO",
-            "instrument": "INDEX"
+            "security_id": "13",  # NSE NIFTY 50 (string format)
+            "segment": "IDX_I",  # Index segment
+            "instrument": "INDEX",
+            "exchange": "NSE"
         },
-       "SENSEX": {
+        "SENSEX": {
             "symbol": "SENSEX",
-            "security_id": 51,  # BSE SENSEX (Update if needed)
-            "segment": "BSE_FNO",
-            "instrument": "INDEX"
+            "security_id": "51",  # BSE SENSEX (string format)
+            "segment": "IDX_I",  # Index segment
+            "instrument": "INDEX",
+            "exchange": "BSE"
         }
+    }
+    
+    # FNO segments for option chain
+    FNO_SEGMENTS = {
+        "NIFTY 50": "NSE_FNO",
+        "SENSEX": "BSE_FNO"
     }
 
 
@@ -183,7 +192,7 @@ class RedisCache:
                 'timestamp': datetime.now(pytz.timezone('Asia/Kolkata')).isoformat()
             })
             
-            self.redis_client.setex(key, Config.REDIS_EXPIRY, value)
+            self.redis.setex(key, Config.REDIS_EXPIRY, value)
             return True
         except Exception as e:
             logger.error(f"Redis store error: {e}")
@@ -466,18 +475,27 @@ class DhanAPI:
     def __init__(self, redis_cache: RedisCache):
         self.headers = {
             'access-token': Config.DHAN_ACCESS_TOKEN,
-            'client-id': Config.DHAN_CLIENT_ID,
             'Content-Type': 'application/json'
         }
         self.redis = redis_cache
-        logger.info("DhanAPI initialized for INDICES")
+        logger.info("DhanAPI initialized for INDICES (Fixed)")
     
-    def get_nearest_expiry(self, security_id: int, segment: str) -> Optional[str]:
+    def get_nearest_expiry(self, index_name: str) -> Optional[str]:
+        """Get nearest expiry for index options"""
         try:
+            index_info = Config.INDICES[index_name]
+            fno_segment = Config.FNO_SEGMENTS[index_name]
+            
+            # For NIFTY, use security_id 25 for FNO
+            # For SENSEX, use security_id 51 for FNO
+            fno_security_id = 25 if index_name == "NIFTY 50" else 51
+            
             payload = {
-                "UnderlyingScrip": int(security_id),
-                "UnderlyingSeg": segment
+                "UnderlyingScrip": str(fno_security_id),
+                "UnderlyingSeg": fno_segment
             }
+            
+            logger.info(f"Fetching expiry for {index_name}: {payload}")
             
             response = requests.post(
                 Config.DHAN_EXPIRY_LIST_URL,
@@ -486,31 +504,48 @@ class DhanAPI:
                 timeout=10
             )
             
+            logger.info(f"Expiry response status: {response.status_code}")
+            
             if response.status_code == 200:
                 data = response.json()
+                logger.info(f"Expiry data: {data}")
                 if data.get('status') == 'success' and data.get('data'):
-                    return data['data'][0]
+                    expiry = data['data'][0]
+                    logger.info(f"{index_name} expiry: {expiry}")
+                    return expiry
+            
+            logger.error(f"Expiry fetch failed: {response.text}")
             return None
             
         except Exception as e:
-            logger.error(f"Expiry error: {e}")
+            logger.error(f"Expiry error for {index_name}: {e}")
+            logger.error(traceback.format_exc())
             return None
     
-    def get_multi_timeframe_data(self, security_id: int, segment: str, symbol: str) -> Optional[Dict[str, pd.DataFrame]]:
+    def get_multi_timeframe_data(self, index_name: str) -> Optional[Dict[str, pd.DataFrame]]:
+        """Fetch intraday data for indices"""
         try:
-            logger.info(f"Fetching MTF data for {symbol}")
+            logger.info(f"Fetching MTF data for {index_name}")
+            
+            index_info = Config.INDICES[index_name]
+            security_id = index_info['security_id']
+            segment = index_info['segment']
+            instrument = index_info['instrument']
             
             ist = pytz.timezone('Asia/Kolkata')
             to_date = datetime.now(ist)
             from_date = to_date - timedelta(days=Config.LOOKBACK_DAYS)
             
+            # Try intraday API first
             payload = {
-                "securityId": str(security_id),
+                "securityId": security_id,
                 "exchangeSegment": segment,
-                "instrument": "INDEX",
+                "instrument": instrument,
                 "fromDate": from_date.strftime("%Y-%m-%d"),
                 "toDate": to_date.strftime("%Y-%m-%d")
             }
+            
+            logger.info(f"Intraday payload: {payload}")
             
             response = requests.post(
                 Config.DHAN_INTRADAY_URL,
@@ -519,14 +554,40 @@ class DhanAPI:
                 timeout=15
             )
             
+            logger.info(f"Intraday response status: {response.status_code}")
+            
             if response.status_code != 200:
-                logger.error(f"MTF data fetch failed: {response.status_code}")
-                return None
+                logger.error(f"Intraday failed: {response.text}")
+                
+                # Try historical API as fallback
+                logger.info(f"Trying historical API for {index_name}")
+                
+                hist_payload = {
+                    "securityId": security_id,
+                    "exchangeSegment": segment,
+                    "instrument": instrument,
+                    "expiryCode": 0,
+                    "fromDate": from_date.strftime("%Y-%m-%d"),
+                    "toDate": to_date.strftime("%Y-%m-%d")
+                }
+                
+                response = requests.post(
+                    Config.DHAN_HISTORICAL_URL,
+                    json=hist_payload,
+                    headers=self.headers,
+                    timeout=15
+                )
+                
+                logger.info(f"Historical response status: {response.status_code}")
+                
+                if response.status_code != 200:
+                    logger.error(f"Historical also failed: {response.text}")
+                    return None
             
             data = response.json()
             
-            if 'timestamp' not in data or len(data['open']) == 0:
-                logger.error("No candle data in response")
+            if 'timestamp' not in data or len(data.get('open', [])) == 0:
+                logger.error(f"No candle data in response: {data}")
                 return None
             
             df_base = pd.DataFrame({
@@ -535,13 +596,17 @@ class DhanAPI:
                 'high': data['high'],
                 'low': data['low'],
                 'close': data['close'],
-                'volume': data['volume']
+                'volume': data.get('volume', [0] * len(data['open']))
             })
             
             df_base = df_base.dropna()
             df_base.set_index('timestamp', inplace=True)
             
-            logger.info(f"Received {len(df_base)} base candles")
+            logger.info(f"Received {len(df_base)} base candles for {index_name}")
+            
+            if len(df_base) < Config.MIN_CANDLES_REQUIRED:
+                logger.warning(f"{index_name}: Only {len(df_base)} candles (need {Config.MIN_CANDLES_REQUIRED})")
+                return None
             
             # Create multiple timeframes
             result = {}
@@ -563,23 +628,28 @@ class DhanAPI:
                 'volume': 'sum'
             }).dropna()
             
-            logger.info(f"{symbol}: 5m={len(result['5m'])}, 15m={len(result['15m'])}, 1h={len(result['1h'])}")
+            logger.info(f"{index_name}: 5m={len(result['5m'])}, 15m={len(result['15m'])}, 1h={len(result['1h'])}")
             
             return result
             
         except Exception as e:
-            logger.error(f"MTF data error: {e}")
+            logger.error(f"MTF data error for {index_name}: {e}")
             logger.error(traceback.format_exc())
             return None
     
-    def get_option_chain(self, security_id: int, segment: str, expiry: str, 
-                        symbol: str, spot_price: float) -> Optional[List[OIData]]:
+    def get_option_chain(self, index_name: str, expiry: str, spot_price: float) -> Optional[List[OIData]]:
+        """Fetch option chain data"""
         try:
+            fno_segment = Config.FNO_SEGMENTS[index_name]
+            fno_security_id = 25 if index_name == "NIFTY 50" else 51
+            
             payload = {
-                "UnderlyingScrip": security_id,
-                "UnderlyingSeg": segment,
+                "UnderlyingScrip": str(fno_security_id),
+                "UnderlyingSeg": fno_segment,
                 "Expiry": expiry
             }
+            
+            logger.info(f"Fetching option chain for {index_name}: {payload}")
             
             response = requests.post(
                 Config.DHAN_OPTION_CHAIN_URL,
@@ -588,8 +658,10 @@ class DhanAPI:
                 timeout=15
             )
             
+            logger.info(f"Option chain response status: {response.status_code}")
+            
             if response.status_code != 200:
-                logger.error(f"Option chain fetch failed: {response.status_code}")
+                logger.error(f"Option chain fetch failed: {response.text}")
                 return None
             
             data = response.json()
@@ -599,10 +671,14 @@ class DhanAPI:
             
             oc_data = data['data'].get('oc', {})
             
+            if not oc_data:
+                logger.error("No option chain strikes")
+                return None
+            
             strikes = [float(s) for s in oc_data.keys()]
             atm_strike = min(strikes, key=lambda x: abs(x - spot_price))
             
-            logger.info(f"{symbol} ATM: {atm_strike} (Spot: {spot_price:.2f})")
+            logger.info(f"{index_name} ATM: {atm_strike} (Spot: {spot_price:.2f})")
             
             oi_list = []
             
@@ -633,11 +709,12 @@ class DhanAPI:
                 except Exception:
                     continue
             
-            logger.info(f"{symbol}: {len(oi_list)} strikes fetched")
+            logger.info(f"{index_name}: {len(oi_list)} strikes fetched")
             return oi_list
             
         except Exception as e:
-            logger.error(f"Option chain error: {e}")
+            logger.error(f"Option chain error for {index_name}: {e}")
+            logger.error(traceback.format_exc())
             return None
 
 
@@ -966,7 +1043,7 @@ class ChartGenerator:
 
 class AdvancedIndexBot:
     def __init__(self):
-        logger.info("Initializing Advanced Index Bot v9.0...")
+        logger.info("Initializing Advanced Index Bot v9.1...")
         self.bot = Bot(token=Config.TELEGRAM_BOT_TOKEN)
         self.redis = RedisCache()
         self.dhan = DhanAPI(self.redis)
@@ -978,7 +1055,7 @@ class AdvancedIndexBot:
         self.total_scans = 0
         self.alerts_sent = 0
         
-        logger.info("Bot v9.0 initialized - NIFTY/SENSEX ONLY")
+        logger.info("Bot v9.1 initialized - NIFTY/SENSEX ONLY (FIXED)")
     
     def is_market_open(self) -> bool:
         ist = pytz.timezone('Asia/Kolkata')
@@ -994,7 +1071,7 @@ class AdvancedIndexBot:
         """Properly escape HTML special characters"""
         return html.escape(str(text))
     
-    async def scan_index(self, index_name: str, index_info: Dict):
+    async def scan_index(self, index_name: str):
         try:
             self.total_scans += 1
             
@@ -1002,18 +1079,14 @@ class AdvancedIndexBot:
             logger.info(f"SCANNING: {index_name}")
             logger.info(f"{'='*70}")
             
-            security_id = index_info['security_id']
-            segment = index_info['segment']
-            symbol = index_info['symbol']
-            
             # Get expiry
-            expiry = self.dhan.get_nearest_expiry(security_id, segment)
+            expiry = self.dhan.get_nearest_expiry(index_name)
             if not expiry:
                 logger.warning(f"{index_name}: No expiry found")
                 return
             
             # Get chart data
-            mtf_data = self.dhan.get_multi_timeframe_data(security_id, segment, symbol)
+            mtf_data = self.dhan.get_multi_timeframe_data(index_name)
             if not mtf_data or '5m' not in mtf_data:
                 logger.warning(f"{index_name}: No chart data")
                 return
@@ -1029,14 +1102,14 @@ class AdvancedIndexBot:
             logger.info(f"Structure: {structure.get('structure')} | Bias: {structure.get('bias')}")
             
             # Get option chain
-            oi_data = self.dhan.get_option_chain(security_id, segment, expiry, symbol, spot_price)
+            oi_data = self.dhan.get_option_chain(index_name, expiry, spot_price)
             if not oi_data or len(oi_data) < 10:
                 logger.warning(f"{index_name}: No option data")
                 return
             
             # OI comparison
-            oi_comparison = self.redis.get_oi_comparison(symbol, oi_data, spot_price)
-            self.redis.store_option_chain(symbol, oi_data, spot_price)
+            oi_comparison = self.redis.get_oi_comparison(index_name, oi_data, spot_price)
+            self.redis.store_option_chain(index_name, oi_data, spot_price)
             
             aggregate = oi_comparison.get('aggregate_analysis')
             if aggregate:
@@ -1047,7 +1120,7 @@ class AdvancedIndexBot:
             
             # DeepSeek advanced analysis
             analysis = self.deepseek.create_advanced_analysis(
-                symbol, spot_price, mtf_data, oi_data, oi_comparison,
+                index_name, spot_price, mtf_data, oi_data, oi_comparison,
                 structure, order_blocks, sr_levels
             )
             
@@ -1079,7 +1152,7 @@ class AdvancedIndexBot:
                 return
             
             # Generate chart
-            chart_image = self.chart_gen.create_chart(mtf_data, symbol, analysis)
+            chart_image = self.chart_gen.create_chart(mtf_data, index_name, analysis)
             
             # Send alert
             await self.send_alert(index_name, spot_price, analysis, aggregate, expiry, chart_image)
@@ -1109,7 +1182,7 @@ class AdvancedIndexBot:
             ist_time = datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%H:%M')
             
             # Compact caption for image - NO HTML FORMATTING
-            caption = f"🔥 ADVANCED ANALYSIS - {index_name}\n\n{signal_emoji} {signal_text} | Confidence: {analysis.confidence}%\nScore: {analysis.total_score}/125 (Chart:{analysis.chart_score} Options:{analysis.option_score} Align:{analysis.alignment_score})\n\n💰 Entry: {analysis.entry_price:.0f} | SL: {analysis.stop_loss:.0f}\n🎯 T1: {analysis.target_1:.0f} | T2: {analysis.target_2:.0f}\nRR: {analysis.risk_reward} | Strike: {analysis.recommended_strike}\n\n⏰ {ist_time} IST | v9.0 Advanced"
+            caption = f"🔥 ADVANCED ANALYSIS - {index_name}\n\n{signal_emoji} {signal_text} | Confidence: {analysis.confidence}%\nScore: {analysis.total_score}/125 (Chart:{analysis.chart_score} Options:{analysis.option_score} Align:{analysis.alignment_score})\n\n💰 Entry: {analysis.entry_price:.0f} | SL: {analysis.stop_loss:.0f}\n🎯 T1: {analysis.target_1:.0f} | T2: {analysis.target_2:.0f}\nRR: {analysis.risk_reward} | Strike: {analysis.recommended_strike}\n\n⏰ {ist_time} IST | v9.1 Fixed"
             
             if chart_image:
                 try:
@@ -1192,7 +1265,7 @@ RISK FACTORS
             if analysis.divergence_warning and analysis.divergence_warning != "None":
                 detailed += f"\n\n{'='*40}\n⚠️ DIVERGENCE WARNING\n{'='*40}\n{safe(analysis.divergence_warning[:150])}"
             
-            detailed += f"\n\n🤖 DeepSeek V3 Advanced | v9.0\n📊 Indices Only (5 min scan)\nExpiry: {expiry}"
+            detailed += f"\n\n🤖 DeepSeek V3 Advanced | v9.1 Fixed\n📊 Indices Only (5 min scan)\nExpiry: {expiry}"
             
             await self.bot.send_message(
                 chat_id=Config.TELEGRAM_CHAT_ID,
@@ -1213,16 +1286,25 @@ RISK FACTORS
             redis_status = "✅" if self.redis.redis_client else "❌"
             
             # Plain text message - NO HTML special characters issues
-            msg = f"""🔥 ADVANCED INDEX BOT v9.0 - ACTIVE 🔥
+            msg = f"""🔥 ADVANCED INDEX BOT v9.1 - ACTIVE 🔥
 
 {'='*40}
-INDICES ONLY - ADVANCED ANALYSIS
+FIXED DATA FETCHING
 {'='*40}
 
 📊 Symbols: NIFTY 50 + SENSEX
 ⏰ Scan: Every 5 minutes
 🔴 Redis: {redis_status}
 🤖 AI: DeepSeek V3 (Advanced)
+
+{'='*40}
+FIXES IN v9.1
+{'='*40}
+✅ Fixed NIFTY 50 security ID (13 for INDEX, 25 for FNO)
+✅ Fixed SENSEX security ID (51 for both)
+✅ Fixed segment mapping (IDX_I for index data)
+✅ Added fallback to historical API
+✅ Better error logging
 
 {'='*40}
 ADVANCED FEATURES
@@ -1242,17 +1324,10 @@ FLEXIBLE FILTERS
 Confidence: ≥70% (flexible)
 OI Divergence: ≥3%
 Volume: ≥30%
-PCR: Greater than 1.1 or Less than 0.9
+PCR: >1.1 or <0.9
 Time: Skip first 10m and last 20m
 
-{'='*40}
-EXPECTED RESULTS
-{'='*40}
-Signals/day: 4-8 (both indices)
-Quality: High probability
-Win Rate Target: 80-85%
-
-Status: 🟢 RUNNING (ADVANCED MODE)"""
+Status: 🟢 RUNNING (FIXED MODE)"""
             
             await self.bot.send_message(
                 chat_id=Config.TELEGRAM_CHAT_ID,
@@ -1265,7 +1340,7 @@ Status: 🟢 RUNNING (ADVANCED MODE)"""
     
     async def run(self):
         logger.info("="*70)
-        logger.info("ADVANCED INDEX BOT v9.0 - NIFTY/SENSEX")
+        logger.info("ADVANCED INDEX BOT v9.1 - NIFTY/SENSEX (FIXED)")
         logger.info("="*70)
         
         missing = []
@@ -1297,9 +1372,9 @@ Status: 🟢 RUNNING (ADVANCED MODE)"""
                 logger.info(f"SCAN CYCLE - {datetime.now(ist).strftime('%H:%M:%S')}")
                 logger.info(f"{'='*70}")
                 
-                for index_name, index_info in Config.INDICES.items():
+                for index_name in Config.INDICES.keys():
                     logger.info(f"\nScanning {index_name}...")
-                    await self.scan_index(index_name, index_info)
+                    await self.scan_index(index_name)
                     await asyncio.sleep(5)  # Small gap between indices
                 
                 logger.info(f"\n{'='*70}")
@@ -1330,7 +1405,7 @@ async def main():
 
 if __name__ == "__main__":
     logger.info("="*70)
-    logger.info("ADVANCED INDEX BOT v9.0 STARTING...")
+    logger.info("ADVANCED INDEX BOT v9.1 STARTING... (FIXED)")
     logger.info("NIFTY 50 + SENSEX ONLY")
     logger.info("="*70)
     
