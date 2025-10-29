@@ -549,14 +549,14 @@ class DhanAPI:
         logger.info(f"DhanAPI initialized - NIFTY 50 v10.0")
     
     def get_nearest_expiry(self) -> Optional[str]:
-        """✅ AUTO: Get nearest expiry"""
+        """✅ AUTO: Get nearest WEEKLY expiry (Tuesday for NIFTY 50)"""
         try:
             payload = {
                 "UnderlyingScrip": Config.FNO_SECURITY_ID,
                 "UnderlyingSeg": Config.FNO_SEGMENT
             }
             
-            logger.info(f"Fetching expiry: {payload}")
+            logger.info(f"Fetching expiry list: {payload}")
             
             response = requests.post(
                 Config.DHAN_EXPIRY_LIST_URL,
@@ -569,16 +569,53 @@ class DhanAPI:
                 data = response.json()
                 if data.get('status') == 'success' and data.get('data'):
                     expiries = data['data']
-                    nearest = expiries[0]
-                    logger.info(f"✅ Auto-selected Expiry: {nearest}")
-                    logger.info(f"Available expiries: {expiries}")
-                    return nearest
+                    logger.info(f"📅 All available expiries: {expiries}")
+                    
+                    if not expiries:
+                        logger.error("No expiries found!")
+                        return None
+                    
+                    # Find nearest TUESDAY expiry (NIFTY 50 weekly)
+                    ist = pytz.timezone('Asia/Kolkata')
+                    today = datetime.now(ist).date()
+                    
+                    nearest_weekly = None
+                    min_days = float('inf')
+                    
+                    for exp_str in expiries:
+                        try:
+                            exp_date = datetime.strptime(exp_str, "%Y-%m-%d").date()
+                            days_diff = (exp_date - today).days
+                            
+                            # Skip past expiries
+                            if days_diff < 0:
+                                continue
+                            
+                            # Check if it's a Tuesday (weekday = 1)
+                            if exp_date.weekday() == 1:  # Tuesday
+                                if days_diff < min_days:
+                                    min_days = days_diff
+                                    nearest_weekly = exp_str
+                        except Exception as e:
+                            logger.warning(f"Date parse error for {exp_str}: {e}")
+                            continue
+                    
+                    if nearest_weekly:
+                        logger.info(f"✅ Selected WEEKLY Expiry (Tuesday): {nearest_weekly}")
+                        logger.info(f"   Days until expiry: {min_days}")
+                        return nearest_weekly
+                    else:
+                        # Fallback to first available
+                        logger.warning("⚠️ No Tuesday expiry found! Using first available.")
+                        logger.info(f"✅ Fallback Expiry: {expiries[0]}")
+                        return expiries[0]
             
             logger.error(f"Expiry fetch failed: {response.text}")
             return None
             
         except Exception as e:
             logger.error(f"Expiry error: {e}")
+            logger.error(traceback.format_exc())
             return None
     
     def get_multi_timeframe_data(self) -> Optional[Dict[str, pd.DataFrame]]:
