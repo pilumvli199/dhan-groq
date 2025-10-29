@@ -139,37 +139,42 @@ class AdvancedAnalysis:
 
 class SecurityIDLoader:
     """
-    NIFTY 50 Security IDs - HARDCODED (Verified from Dhan API)
+    NIFTY 50 Security IDs - CORRECTED (Final Fix)
     
-    CSV parsing complex ahe, so direct IDs use karnar
+    NIFTY 50:
+    - Index: 13 (IDX_I) - Spot price
+    - F&O: 13 (NSE_FNO) - Options
+    
+    Both use same ID but different segments!
     """
     
     @staticmethod
     def load_nifty_ids() -> Dict:
         """
-        ✅ NIFTY 50 OFFICIAL IDs:
+        ✅ NIFTY 50 CORRECT IDs:
         - Index (Spot Price): Security ID 13, Segment IDX_I
-        - F&O (Options): Security ID 25, Segment NSE_FNO
+        - F&O (Options): Security ID 13, Segment NSE_FNO
         
-        Source: Dhan API Documentation + Testing
+        IMPORTANT: Same ID, different segments!
         """
         try:
             logger.info("🔍 Loading NIFTY 50 Security IDs...")
             
-            # ✅ HARDCODED VERIFIED IDs
+            # ✅ CORRECTED IDs (NIFTY 50 uses ID 13 for BOTH)
             index_id = 13   # NIFTY 50 Index (Spot Price)
-            fno_id = 25     # NIFTY 50 F&O (Options)
+            fno_id = 13     # NIFTY 50 F&O (Options) - SAME ID!
             
             logger.info("="*60)
-            logger.info("✅ NIFTY 50 SECURITY IDs (HARDCODED)")
+            logger.info("✅ NIFTY 50 SECURITY IDs (CORRECTED v10.3)")
             logger.info("="*60)
             logger.info(f"📊 Index (Spot): Security ID {index_id} | Segment: IDX_I")
             logger.info(f"🎯 F&O (Options): Security ID {fno_id} | Segment: NSE_FNO")
+            logger.info("⚠️  IMPORTANT: Same ID, different segments!")
             logger.info("="*60)
             
             # Verify by testing API call
             try:
-                logger.info("🔍 Verifying IDs with test API call...")
+                logger.info("🔍 Verifying F&O ID with test API call...")
                 
                 headers = {
                     'access-token': Config.DHAN_ACCESS_TOKEN,
@@ -194,16 +199,21 @@ class SecurityIDLoader:
                     data = response.json()
                     if data.get('status') == 'success' and data.get('data'):
                         expiries = data['data']
-                        logger.info(f"✅ Verification SUCCESS!")
+                        logger.info(f"✅ F&O Verification SUCCESS!")
                         logger.info(f"   Found {len(expiries)} expiries: {expiries[:3]}")
+                        
+                        # Check if weekly expiries available
+                        if len(expiries) >= 3:
+                            logger.info(f"   Weekly expiries available: {len(expiries)}")
                     else:
                         logger.warning(f"⚠️ Verification response: {data}")
                 else:
                     logger.warning(f"⚠️ Verification failed: Status {response.status_code}")
+                    logger.warning(f"   Response: {response.text[:200]}")
                     
             except Exception as e:
                 logger.warning(f"⚠️ Verification test failed: {e}")
-                logger.info("Proceeding with hardcoded IDs anyway...")
+                logger.info("Proceeding with IDs anyway...")
             
             return {
                 'index_id': index_id,
@@ -218,7 +228,7 @@ class SecurityIDLoader:
             logger.warning("🚨 Using emergency fallback")
             return {
                 'index_id': 13,
-                'fno_id': 25
+                'fno_id': 13
             }
 
 
